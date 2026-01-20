@@ -117,7 +117,7 @@ private def isMathlibOk (name : Name) : m Bool := do
   let module := (← getEnv).allImportedModuleNames[modIdx]!
   return [`Init, `Lean, `Std, `Batteries, `Mathlib].any fun pre => pre.isPrefixOf module
 
-def NodeWithPos.toLatex (node : NodeWithPos) : m Latex := do
+def _root_.Dress.NodeWithPos.toLatex (node : Dress.NodeWithPos) : m Latex := do
   -- In the output, we merge the Lean nodes corresponding to the same LaTeX label.
   let env ← getEnv
   let allLeanNames := getLeanNamesOfLatexLabel env node.latexLabel
@@ -205,7 +205,7 @@ structure LatexOutput where
   header : System.FilePath → Latex
   artifacts : Array LatexArtifact
 
-def NodeWithPos.toLatexArtifact (node : NodeWithPos) : m LatexArtifact := do
+def _root_.Dress.NodeWithPos.toLatexArtifact (node : Dress.NodeWithPos) : m LatexArtifact := do
   return { id := node.latexLabel, content := ← node.toLatex }
 
 end ToLatex
@@ -337,7 +337,7 @@ private def locationToJson (location : DeclarationLocation) : Json :=
 
 private def highlightedToJson (hl : SubVerso.Highlighting.Highlighted) : Json := toJson hl
 
-def nodeWithPosToJson (node : Architect.NodeWithPos) : Json :=
+def nodeWithPosToJson (node : NodeWithPos) : Json :=
   json% {
     "name": $(node.name),
     "latexLabel": $(node.latexLabel),

@@ -154,7 +154,7 @@ def splitAtDefinitionAssign (hl : Highlighted) (splitAtAssign : Bool := true)
     Highlighted code is looked up from `highlightingMap` (from subverso-extract-mod) first,
     then falls back to the environment extension (Hook mechanism during elaboration).
     Pre-rendered HTML is looked up from `htmlMap` (from .html.json files). -/
-def Architect.Node.toNodeWithPos (node : Architect.Node)
+def _root_.Architect.Node.toNodeWithPos (node : Architect.Node)
     (highlightingMap : NameMap Highlighted := {})
     (htmlMap : NameMap String := {})
     : CoreM NodeWithPos := do
