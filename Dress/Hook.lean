@@ -237,12 +237,14 @@ def getDressedOutputPath (buildDir : System.FilePath) (moduleName : Name) : Syst
     fun path component => path / component.toString
   modulePath.withExtension "json"
 
-/-- Get the output path for a module's highlighting JSON file.
-    Returns `.lake/build/dressed/{Module/Path}.json` -/
+/-- Get the output path for a module's SubVerso-compatible JSON file.
+    Returns `.lake/build/dressed/{Module/Path}.subverso.json`
+
+    This is separate from the Dress extended format (.json) to avoid overwriting. -/
 def getHighlightingOutputPath (buildDir : System.FilePath) (moduleName : Name) : System.FilePath :=
   let modulePath := moduleName.components.foldl (init := buildDir / "dressed")
     fun path component => path / component.toString
-  modulePath.withExtension "json"
+  modulePath.withExtension "subverso.json"
 
 /-- Write highlighted code to a JSON file atomically.
     Uses write-to-temp-then-rename for crash safety on POSIX systems. -/
