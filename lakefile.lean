@@ -2,7 +2,7 @@ import Lake
 open System Lake DSL
 
 package Dress where
-  moreLinkArgs := #["-L./.lake/packages/LeanArchitect/.lake/build/lib", "-lLeanArchitect"]
+  -- Lake handles linking for local dependencies automatically
 
 @[default_target]
 lean_lib Dress
@@ -12,14 +12,14 @@ lean_exe extract_blueprint where
   root := `Main
   supportInterpreter := true
 
-require LeanArchitect from git
-  "https://github.com/pitmonticone/LeanArchitect" @ "main"
+-- Use local path during development - change to git URL for release
+require LeanArchitect from ".." / "LeanArchitect"
 
 require Cli from git
   "https://github.com/mhuisi/lean4-cli" @ "v4.27.0-rc1"
 
 require subverso from git
-  "https://github.com/leanprover/subverso"
+  "https://github.com/leanprover/subverso" @ "main"
 
 require verso from git
   "https://github.com/leanprover/verso.git" @ "main"

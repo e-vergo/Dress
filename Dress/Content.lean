@@ -21,8 +21,9 @@ These contents are sorted by declaration range (similar to the sort in doc-gen4)
 deriving instance Repr for ModuleDoc in
 /-- The export blueprint LaTeX from a module is determined by the list of `BlueprintContent`
 in the module. This is analogous to doc-gen4's `ModuleMember`. -/
+-- Use Architect.NodeWithPos until LeanArchitect is refactored to remove it
 inductive BlueprintContent where
-  | node : NodeWithPos → BlueprintContent
+  | node : Architect.NodeWithPos → BlueprintContent
   | modDoc : ModuleDoc → BlueprintContent
 deriving Inhabited, Repr
 

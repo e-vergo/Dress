@@ -1,0 +1,12 @@
+# Lake build directory
+.lake/
+
+# Editor files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# macOS
+.DS_Store

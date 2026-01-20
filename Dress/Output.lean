@@ -10,7 +10,8 @@ import Dress.Hook
 
 open Lean
 
-namespace Dress
+-- Define functions in Architect namespace so dot notation works
+namespace Architect
 
 section ToLatex
 
@@ -20,7 +21,7 @@ Conversion from Lean nodes to LaTeX.
 
 abbrev Latex := String
 
--- Note: base64 encoding functions are provided by Hook.lean (encodeBase64, stringToBase64)
+-- Note: base64 encoding functions are provided by Dress.Hook (encodeBase64, stringToBase64)
 
 /-!
 We convert nodes to LaTeX.
@@ -59,18 +60,18 @@ def InferredUses.empty : InferredUses := { uses := #[], leanOk := true }
 def InferredUses.merge (inferredUsess : Array InferredUses) : InferredUses :=
   { uses := inferredUsess.flatMap (·.uses), leanOk := inferredUsess.all (·.leanOk) }
 
-def Architect.NodePart.inferUses (part : Architect.NodePart) (latexLabel : String) (used : NameSet) : m InferredUses := do
+def NodePart.inferUses (part : NodePart) (latexLabel : String) (used : NameSet) : m InferredUses := do
   let env ← getEnv
   let uses := part.uses.foldl (·.insert ·) used |>.filter (· ∉ part.excludes)
   let mut usesLabels : Std.HashSet String := .ofArray <|
-    uses.toArray.filterMap fun c => (Architect.blueprintExt.find? env c).map (·.latexLabel)
+    uses.toArray.filterMap fun c => (blueprintExt.find? env c).map (·.latexLabel)
   usesLabels := usesLabels.erase latexLabel
   usesLabels := part.usesLabels.foldl (·.insert ·) usesLabels |>.filter (· ∉ part.excludesLabels)
   return { uses := usesLabels.toArray, leanOk := !uses.contains ``sorryAx }
 
 /-- Infer the used constants of a node as (statement uses, proof uses). -/
-def Architect.Node.inferUses (node : Architect.Node) : m (InferredUses × InferredUses) := do
-  let (statementUsed, proofUsed) ← Architect.collectUsed node.name
+def Node.inferUses (node : Node) : m (InferredUses × InferredUses) := do
+  let (statementUsed, proofUsed) ← collectUsed node.name
   if let some proof := node.proof then
     return (
       ← node.statement.inferUses node.latexLabel statementUsed,
@@ -83,7 +84,7 @@ def Architect.Node.inferUses (node : Architect.Node) : m (InferredUses × Inferr
     )
 
 /-- Merges and converts an array of `NodePart` to LaTeX. It is assumed that `part ∈ allParts`. -/
-def Architect.NodePart.toLatex (part : Architect.NodePart) (allParts : Array Architect.NodePart := #[part]) (inferredUses : InferredUses)
+def NodePart.toLatex (part : NodePart) (allParts : Array NodePart := #[part]) (inferredUses : InferredUses)
     (title : Option String := none) (additionalContent : String := "") (defaultText : String := "") : m Latex := do
   let mut out := ""
   out := out ++ "\\begin{" ++ part.latexEnv ++ "}"
@@ -119,8 +120,8 @@ private def isMathlibOk (name : Name) : m Bool := do
 def NodeWithPos.toLatex (node : NodeWithPos) : m Latex := do
   -- In the output, we merge the Lean nodes corresponding to the same LaTeX label.
   let env ← getEnv
-  let allLeanNames := Architect.getLeanNamesOfLatexLabel env node.latexLabel
-  let allNodes := allLeanNames.filterMap fun name => Architect.blueprintExt.find? env name
+  let allLeanNames := getLeanNamesOfLatexLabel env node.latexLabel
+  let allNodes := allLeanNames.filterMap fun name => blueprintExt.find? env name
 
   let mut addLatex := ""
   addLatex := addLatex ++ "\\label{" ++ node.latexLabel ++ "}\n"
@@ -151,31 +152,31 @@ def NodeWithPos.toLatex (node : NodeWithPos) : m Latex := do
   if let some hl := node.highlightedCode then
     -- JSON format (backward compatibility)
     let jsonStr := (toJson hl).compress
-    let base64Json := stringToBase64 jsonStr
+    let base64Json := Dress.stringToBase64 jsonStr
     addLatex := addLatex ++ "\\leansource{" ++ base64Json ++ "}\n"
     -- HTML format: use pre-rendered if available, otherwise render on demand
-    let htmlStr := node.htmlCode.getD (HtmlRender.renderHighlightedToHtml hl)
-    let base64Html := stringToBase64 htmlStr
+    let htmlStr := node.htmlCode.getD (Dress.HtmlRender.renderHighlightedToHtml hl)
+    let base64Html := Dress.stringToBase64 htmlStr
     addLatex := addLatex ++ "\\leansourcehtml{" ++ base64Html ++ "}\n"
   -- Emit signature highlighting
   if let some hl := node.highlightedSignature then
     -- JSON format (backward compatibility)
     let jsonStr := (toJson hl).compress
-    let base64Json := stringToBase64 jsonStr
+    let base64Json := Dress.stringToBase64 jsonStr
     addLatex := addLatex ++ "\\leansignaturesource{" ++ base64Json ++ "}\n"
     -- HTML format: use pre-rendered if available, otherwise render on demand
-    let htmlStr := node.htmlSignature.getD (HtmlRender.renderHighlightedToHtml hl)
-    let base64Html := stringToBase64 htmlStr
+    let htmlStr := node.htmlSignature.getD (Dress.HtmlRender.renderHighlightedToHtml hl)
+    let base64Html := Dress.stringToBase64 htmlStr
     addLatex := addLatex ++ "\\leansignaturesourcehtml{" ++ base64Html ++ "}\n"
   -- Emit proof body highlighting
   if let some hl := node.highlightedProofBody then
     -- JSON format (backward compatibility)
     let jsonStr := (toJson hl).compress
-    let base64Json := stringToBase64 jsonStr
+    let base64Json := Dress.stringToBase64 jsonStr
     addLatex := addLatex ++ "\\leanproofsource{" ++ base64Json ++ "}\n"
     -- HTML format: use pre-rendered if available, otherwise render on demand
-    let htmlStr := node.htmlProofBody.getD (HtmlRender.renderHighlightedToHtml hl)
-    let base64Html := stringToBase64 htmlStr
+    let htmlStr := node.htmlProofBody.getD (Dress.HtmlRender.renderHighlightedToHtml hl)
+    let base64Html := Dress.stringToBase64 htmlStr
     addLatex := addLatex ++ "\\leanproofsourcehtml{" ++ base64Html ++ "}\n"
 
   let inferredUsess ← allNodes.mapM (·.inferUses)
@@ -186,7 +187,7 @@ def NodeWithPos.toLatex (node : NodeWithPos) : m Latex := do
   let mainContent ← match node.proof with
     | none => pure statementLatex
     | some proof =>
-      let proofDocString := Architect.getProofDocString env node.name
+      let proofDocString := getProofDocString env node.name
       let proofLatex ← proof.toLatex (allNodes.filterMap (·.proof)) proofUses (defaultText := proofDocString)
       pure (statementLatex ++ proofLatex)
 
@@ -207,11 +208,24 @@ structure LatexOutput where
 def NodeWithPos.toLatexArtifact (node : NodeWithPos) : m LatexArtifact := do
   return { id := node.latexLabel, content := ← node.toLatex }
 
-def BlueprintContent.toLatex : BlueprintContent → m Latex
+end ToLatex
+
+end Architect
+
+-- Continue in Dress namespace for the rest
+namespace Dress
+
+-- Reuse types from Architect namespace
+abbrev Latex := Architect.Latex
+abbrev LatexArtifact := Architect.LatexArtifact
+abbrev LatexOutput := Architect.LatexOutput
+abbrev InferredUses := Architect.InferredUses
+
+def BlueprintContent.toLatex : BlueprintContent → CoreM String
   | .node n => return "\\inputleannode{" ++ n.latexLabel ++ "}"
   | .modDoc d => return d.doc
 
-def latexPreamble : m Latex := do
+def latexPreamble : CoreM String := do
   return "%%% This file is automatically generated by Dress. %%%
 
 %%% Macro definitions for \\inputleannode, \\inputleanmodule %%%
@@ -251,19 +265,19 @@ private def dedupContentsByLatexLabel (contents : Array BlueprintContent) : Arra
   return result
 
 /-- Convert a module to a header file and artifacts. The header file requires the path to the artifacts directory. -/
-private def moduleToLatexOutputAux (module : Name) (contents : Array BlueprintContent) : m LatexOutput := do
+private def moduleToLatexOutputAux (module : Name) (contents : Array BlueprintContent) : CoreM Architect.LatexOutput := do
   -- First deduplicate contents by LaTeX label
   let contents' := dedupContentsByLatexLabel contents
   -- Artifact files
-  let artifacts : Array LatexArtifact := ← contents'.filterMapM fun
+  let artifacts : Array Architect.LatexArtifact := ← contents'.filterMapM fun
     | .node n => n.toLatexArtifact
     | _ => pure none
   -- Header file
   let preamble ← latexPreamble
   let headerModuleLatex ← contents'.mapM BlueprintContent.toLatex
-  let header (artifactsDir : System.FilePath) : Latex :=
+  let header (artifactsDir : System.FilePath) : String :=
     preamble ++ "\n\n" ++
-      "\n\n".intercalate (artifacts.map fun ⟨id, _⟩ => "\\newleannode{" ++ id ++ "}{" ++ Latex.input (artifactsDir / id) ++ "}").toList ++ "\n\n" ++
+      "\n\n".intercalate (artifacts.map fun ⟨id, _⟩ => "\\newleannode{" ++ id ++ "}{" ++ Architect.Latex.input (artifactsDir / id) ++ "}").toList ++ "\n\n" ++
       "\\newleanmodule{" ++ module.toString ++ "}{\n" ++ "\n\n".intercalate headerModuleLatex.toList ++ "\n}"
   return { header, artifacts }
 
@@ -274,13 +288,13 @@ private def moduleToLatexOutputAux (module : Name) (contents : Array BlueprintCo
 def moduleToLatexOutput (module : Name)
     (highlightingMap : NameMap SubVerso.Highlighting.Highlighted := {})
     (htmlMap : NameMap String := {})
-    : CoreM LatexOutput := do
+    : CoreM Architect.LatexOutput := do
   let contents ← getBlueprintContents module highlightingMap htmlMap
   moduleToLatexOutputAux module contents
 
 /-- Convert current module to LaTeX (header file, artifact files).
     Highlighted code is captured during elaboration via the Hook mechanism. -/
-def mainModuleToLatexOutput : CoreM LatexOutput := do
+def mainModuleToLatexOutput : CoreM Architect.LatexOutput := do
   let contents ← getMainModuleBlueprintContents
   moduleToLatexOutputAux (← getMainModule) contents
 
@@ -307,8 +321,6 @@ open Elab Command in
       elabCommand <| ← `(command| #show_blueprint $(mkIdent name))
   | _ => throwUnsupportedSyntax
 
-end ToLatex
-
 section ToJson
 
 private def rangeToJson (range : DeclarationRange) : Json :=
@@ -325,7 +337,7 @@ private def locationToJson (location : DeclarationLocation) : Json :=
 
 private def highlightedToJson (hl : SubVerso.Highlighting.Highlighted) : Json := toJson hl
 
-def NodeWithPos.toJson (node : NodeWithPos) : Json :=
+def nodeWithPosToJson (node : Architect.NodeWithPos) : Json :=
   json% {
     "name": $(node.name),
     "latexLabel": $(node.latexLabel),
@@ -341,7 +353,7 @@ def NodeWithPos.toJson (node : NodeWithPos) : Json :=
   }
 
 def BlueprintContent.toJson : BlueprintContent → Json
-  | .node n => json% {"type": "node", "data": $(n.toJson)}
+  | .node n => json% {"type": "node", "data": $(nodeWithPosToJson n)}
   | .modDoc d => json% {"type": "moduleDoc", "data": $(d.doc)}
 
 def moduleToJson (module : Name) (highlightingMap : NameMap SubVerso.Highlighting.Highlighted := {})
@@ -365,7 +377,7 @@ open Elab Command in
   | `(command| #show_blueprint_json $id:ident) => do
     let name ← liftCoreM <| realizeGlobalConstNoOverloadWithInfo id
     let some node := Architect.blueprintExt.find? (← getEnv) name | throwError "{name} does not have @[blueprint] attribute"
-    let json := (← liftCoreM node.toNodeWithPos).toJson
+    let json := nodeWithPosToJson (← liftCoreM node.toNodeWithPos)
     logInfo m!"{json}"
   | `(command| #show_blueprint_json $label:str) => do
     let env ← getEnv
@@ -386,7 +398,7 @@ def libraryToRelPath (library : Name) (ext : String) : System.FilePath :=
   System.mkFilePath ["library", library.toString (escape := false)] |>.addExtension ext
 
 /-- Write `latex` to the appropriate blueprint tex file. Returns the list of paths to auxiliary output files (note: the returned paths are currently discarded). -/
-def outputLatexResults (basePath : System.FilePath) (module : Name) (latex : LatexOutput) : IO (Array System.FilePath) := do
+def outputLatexResults (basePath : System.FilePath) (module : Name) (latex : Architect.LatexOutput) : IO (Array System.FilePath) := do
   let filePath := basePath / moduleToRelPath module "tex"
   let artifactsDir := basePath / moduleToRelPath module "artifacts"
   if let some d := filePath.parent then FS.createDirAll d
@@ -407,8 +419,8 @@ def outputJsonResults (basePath : System.FilePath) (module : Name) (json : Json)
 /-- Write to an appropriate index tex file that \inputs all modules in a library. -/
 def outputLibraryLatex (basePath : System.FilePath) (library : Name) (modules : Array Name) : IO Unit := do
   FS.createDirAll basePath
-  let latex : Latex := "\n\n".intercalate
-    (modules.map fun mod => Latex.input (basePath / moduleToRelPath mod "tex")).toList
+  let latex : String := "\n\n".intercalate
+    (modules.map fun mod => Architect.Latex.input (basePath / moduleToRelPath mod "tex")).toList
   let filePath := basePath / libraryToRelPath library "tex"
   if let some d := filePath.parent then FS.createDirAll d
   FS.writeFile filePath latex
