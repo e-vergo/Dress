@@ -5,11 +5,31 @@
 -- Re-export Architect so users only need `import Dress`
 import Architect
 
+-- Core types and utilities
 import Dress.Core
-import Dress.HookState
+import Dress.Base64
 import Dress.Highlighting
 import Dress.HtmlRender
+
+-- Capture: Elaboration-time artifact capture
+import Dress.Capture.State
+import Dress.Capture.InfoTree
+import Dress.Capture.Config
+import Dress.Capture.ElabRules
+
+-- Serialize: Output format generation
+import Dress.Serialize.Json
+import Dress.Serialize.Html
+import Dress.Serialize.Artifacts
+
+-- Generate: LaTeX and module output
+import Dress.Generate.Latex
+import Dress.Generate.Module
+
+-- Main entry point (re-exports from submodules)
 import Dress.Hook
+
+-- Content and loading utilities
 import Dress.Content
 import Dress.SubVersoExtract
 import Dress.Output
