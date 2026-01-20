@@ -12,8 +12,8 @@ lean_exe extract_blueprint where
   root := `Main
   supportInterpreter := true
 
--- Use local path during development - change to git URL for release
-require LeanArchitect from ".." / "LeanArchitect"
+require LeanArchitect from git
+  "https://github.com/e-vergo/LeanArchitect" @ "main"
 
 require Cli from git
   "https://github.com/mhuisi/lean4-cli" @ "v4.27.0-rc1"
