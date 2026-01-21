@@ -16,13 +16,12 @@ All artifacts live under `.lake/build/dressed/`:
 
 ```
 .lake/build/dressed/{Module/Path}/
-├── module.json          # Module-level metadata
-├── module.tex           # Module-level LaTeX header
-└── artifacts/           # Per-declaration artifacts
-    └── {sanitized-label}/
-        ├── decl.tex     # Declaration LaTeX
-        ├── decl.html    # Declaration HTML
-        └── decl.json    # Declaration JSON
+├── module.json              # Module-level metadata
+├── module.tex               # Module-level LaTeX header
+└── {sanitized-label}/       # Per-declaration artifacts
+    ├── decl.tex             # Declaration LaTeX
+    ├── decl.html            # Declaration HTML
+    └── decl.json            # Declaration JSON
 ```
 -/
 
@@ -38,11 +37,6 @@ def buildModulePath (baseDir : System.FilePath) (moduleName : Lean.Name) : Syste
     Returns `.lake/build/dressed/{Module/Path}/` -/
 def getModuleDressedDir (buildDir : System.FilePath) (moduleName : Lean.Name) : System.FilePath :=
   buildModulePath (buildDir / "dressed") moduleName
-
-/-- Get the artifacts directory for a module's per-declaration files.
-    Returns `.lake/build/dressed/{Module/Path}/artifacts/` -/
-def getModuleArtifactsDir (buildDir : System.FilePath) (moduleName : Lean.Name) : System.FilePath :=
-  getModuleDressedDir buildDir moduleName / "artifacts"
 
 /-- Get the path for a module's JSON metadata file.
     Returns `.lake/build/dressed/{Module/Path}/module.json` -/
@@ -60,43 +54,43 @@ def sanitizeLabel (label : String) : String :=
   label.replace ":" "-"
 
 /-- Get the directory for a declaration's artifacts.
-    Returns `.lake/build/dressed/{Module/Path}/artifacts/{sanitized-label}/` -/
+    Returns `.lake/build/dressed/{Module/Path}/{sanitized-label}/` -/
 def getDeclarationDir (buildDir : System.FilePath) (moduleName : Lean.Name) (label : String) : System.FilePath :=
-  getModuleArtifactsDir buildDir moduleName / sanitizeLabel label
+  getModuleDressedDir buildDir moduleName / sanitizeLabel label
 
 /-- Get the path for a declaration's .tex file.
-    Returns `.lake/build/dressed/{Module/Path}/artifacts/{sanitized-label}/decl.tex` -/
+    Returns `.lake/build/dressed/{Module/Path}/{sanitized-label}/decl.tex` -/
 def getDeclarationTexPath (buildDir : System.FilePath) (moduleName : Lean.Name) (label : String) : System.FilePath :=
   getDeclarationDir buildDir moduleName label / "decl.tex"
 
 /-- Get the path for a declaration's .html file.
-    Returns `.lake/build/dressed/{Module/Path}/artifacts/{sanitized-label}/decl.html` -/
+    Returns `.lake/build/dressed/{Module/Path}/{sanitized-label}/decl.html` -/
 def getDeclarationHtmlPath (buildDir : System.FilePath) (moduleName : Lean.Name) (label : String) : System.FilePath :=
   getDeclarationDir buildDir moduleName label / "decl.html"
 
 /-- Get the path for a declaration's .json file.
-    Returns `.lake/build/dressed/{Module/Path}/artifacts/{sanitized-label}/decl.json` -/
+    Returns `.lake/build/dressed/{Module/Path}/{sanitized-label}/decl.json` -/
 def getDeclarationJsonPath (buildDir : System.FilePath) (moduleName : Lean.Name) (label : String) : System.FilePath :=
   getDeclarationDir buildDir moduleName label / "decl.json"
 
 /-- Get the declaration directory path relative to blueprint/src/ for LaTeX \input.
-    Returns `../../.lake/build/dressed/{Module/Path}/artifacts/{sanitized-label}`
+    Returns `../../.lake/build/dressed/{Module/Path}/{sanitized-label}`
 
     The `../../` prefix accounts for plastex running from `blueprint/` with
     tex files in `blueprint/src/`. -/
 def getDeclarationDirForLatex (moduleName : Lean.Name) (label : String) : String :=
   let modulePathComponents := moduleName.components.map (·.toString)
-  "../../.lake/build/dressed/" ++ "/".intercalate modulePathComponents ++ "/artifacts/" ++ sanitizeLabel label
+  "../../.lake/build/dressed/" ++ "/".intercalate modulePathComponents ++ "/" ++ sanitizeLabel label
 
-/-- Get the artifacts directory path relative to blueprint/src/ for LaTeX \input.
-    Returns `../../.lake/build/dressed/{Module/Path}/artifacts`
+/-- Get the module dressed directory path relative to blueprint/src/ for LaTeX \input.
+    Returns `../../.lake/build/dressed/{Module/Path}`
 
     The `../../` prefix accounts for plastex running from `blueprint/` with
     tex files in `blueprint/src/`.
 
-    This is the base artifacts directory; for specific declarations use `getDeclarationDirForLatex`. -/
-def getArtifactsDirForLatex (moduleName : Lean.Name) : String :=
+    This is the module directory containing declaration subdirs; for specific declarations use `getDeclarationDirForLatex`. -/
+def getModuleDirForLatex (moduleName : Lean.Name) : String :=
   let modulePathComponents := moduleName.components.map (·.toString)
-  "../../.lake/build/dressed/" ++ "/".intercalate modulePathComponents ++ "/artifacts"
+  "../../.lake/build/dressed/" ++ "/".intercalate modulePathComponents
 
 end Dress.Paths

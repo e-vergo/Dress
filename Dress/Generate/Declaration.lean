@@ -21,7 +21,7 @@ Each @[blueprint] declaration gets its own subdirectory:
 
 ## Output Location
 
-All artifacts are written to `.lake/build/dressed/{Module/Path}/artifacts/{sanitized-label}/`.
+All artifacts are written to `.lake/build/dressed/{Module/Path}/{sanitized-label}/`.
 -/
 
 open Lean Elab Command

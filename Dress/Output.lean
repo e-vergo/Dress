@@ -404,15 +404,15 @@ def outputLatexResults (basePath : System.FilePath) (module : Name) (latex : Arc
   -- Use relative path for LaTeX \input{} commands
   -- plastex runs from blueprint/, tex files are in blueprint/src/
   -- so ../../ goes from blueprint/src/ to project root, then into .lake/build/dressed/
-  let relativeArtifactsDir : System.FilePath :=
-    System.FilePath.mk (Paths.getArtifactsDirForLatex module)
-  -- Absolute path for writing artifact files
-  let artifactsDir := basePath / moduleToRelPath module "artifacts"
+  let relativeModuleDir : System.FilePath :=
+    System.FilePath.mk (Paths.getModuleDirForLatex module)
+  -- Absolute path for writing artifact files (declaration subdirs in module dir)
+  let moduleDressedDir := basePath / moduleToRelPath module "dressed"
   if let some d := filePath.parent then FS.createDirAll d
-  FS.writeFile filePath (latex.header relativeArtifactsDir)
+  FS.writeFile filePath (latex.header relativeModuleDir)
 
   latex.artifacts.mapM fun art => do
-    let path := artifactsDir / (art.id ++ ".tex")
+    let path := moduleDressedDir / art.id / (art.id ++ ".tex")
     if let some d := path.parent then FS.createDirAll d
     FS.writeFile path art.content
     return path
