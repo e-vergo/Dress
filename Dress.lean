@@ -25,6 +25,7 @@ import Dress.Serialize.Artifacts
 -- Generate: LaTeX and module output
 import Dress.Generate.Latex
 import Dress.Generate.Module
+import Dress.Generate.Declaration
 
 -- Main entry point (re-exports from submodules)
 import Dress.Hook

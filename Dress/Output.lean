@@ -7,6 +7,7 @@ import Dress.Content
 import Architect.Tactic
 import Dress.HtmlRender
 import Dress.Hook
+import Dress.Paths
 
 open Lean
 
@@ -400,9 +401,15 @@ def libraryToRelPath (library : Name) (ext : String) : System.FilePath :=
 /-- Write `latex` to the appropriate blueprint tex file. Returns the list of paths to auxiliary output files (note: the returned paths are currently discarded). -/
 def outputLatexResults (basePath : System.FilePath) (module : Name) (latex : Architect.LatexOutput) : IO (Array System.FilePath) := do
   let filePath := basePath / moduleToRelPath module "tex"
+  -- Use relative path for LaTeX \input{} commands
+  -- plastex runs from blueprint/, tex files are in blueprint/src/
+  -- so ../../ goes from blueprint/src/ to project root, then into .lake/build/dressed/
+  let relativeArtifactsDir : System.FilePath :=
+    System.FilePath.mk (Paths.getArtifactsDirForLatex module)
+  -- Absolute path for writing artifact files
   let artifactsDir := basePath / moduleToRelPath module "artifacts"
   if let some d := filePath.parent then FS.createDirAll d
-  FS.writeFile filePath (latex.header artifactsDir)
+  FS.writeFile filePath (latex.header relativeArtifactsDir)
 
   latex.artifacts.mapM fun art => do
     let path := artifactsDir / (art.id ++ ".tex")

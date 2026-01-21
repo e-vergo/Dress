@@ -24,170 +24,263 @@ require subverso from git
 require verso from git
   "https://github.com/leanprover/verso.git" @ "main"
 
-/-- Facet that provides dressed JSON for a module.
+/-! ## Path Helpers
 
-    **New behavior (preferred):** If the module imports `Dress`, highlighting is captured
-    during elaboration via Hook.lean and written to `.lake/build/dressed/{Module/Path}.json`.
-    This facet simply waits for the olean to be built and returns the JSON path.
+Centralized path construction for dressed artifacts.
+Mirrors `Dress.Paths` module for Lake facet use. -/
 
-    **Fallback behavior:** If the JSON file doesn't exist after olean compilation (module doesn't
-    import Dress, or `#export_blueprint_highlighting` wasn't called), falls back to running
-    `subverso-extract-mod` to generate the highlighting.
+/-- Get the dressed directory for a module.
+    Returns `.lake/build/dressed/{Module/Path}/` -/
+def getModuleDressedDir (buildDir : System.FilePath) (moduleName : Lean.Name) : System.FilePath :=
+  moduleName.components.foldl (init := buildDir / "dressed")
+    fun path component => path / component.toString
+
+/-- Get the artifacts directory for a module's per-declaration files.
+    Returns `.lake/build/dressed/{Module/Path}/artifacts/` -/
+def getModuleArtifactsDir (buildDir : System.FilePath) (moduleName : Lean.Name) : System.FilePath :=
+  getModuleDressedDir buildDir moduleName / "artifacts"
+
+/-- Get the path for a module's aggregated JSON file.
+    Returns `.lake/build/dressed/{Module/Path}/module.json` -/
+def getModuleJsonPath (buildDir : System.FilePath) (moduleName : Lean.Name) : System.FilePath :=
+  getModuleDressedDir buildDir moduleName / "module.json"
+
+/-- Get the path for a module's LaTeX header file.
+    Returns `.lake/build/dressed/{Module/Path}/module.tex` -/
+def getModuleTexPath (buildDir : System.FilePath) (moduleName : Lean.Name) : System.FilePath :=
+  getModuleDressedDir buildDir moduleName / "module.tex"
+
+/-- Sanitize a label for use as a filename.
+    Replaces `:` with `-` for filesystem compatibility. -/
+def sanitizeLabel (label : String) : String :=
+  label.replace ":" "-"
+
+/-- Get the artifacts directory path relative to blueprint/src/ for LaTeX \input.
+    Returns `../../.lake/build/dressed/{Module/Path}/artifacts`
+
+    The `../../` prefix accounts for plastex running from `blueprint/` with
+    tex files in `blueprint/src/`. -/
+def getArtifactsDirForLatex (moduleName : Lean.Name) : String :=
+  let modulePathComponents := moduleName.components.map (·.toString)
+  "../../.lake/build/dressed/" ++ "/".intercalate modulePathComponents ++ "/artifacts"
+
+/-! ## JSON Parsing Helpers -/
+
+/-- Parse a JSON string into a Json object. Returns none on failure. -/
+def parseJson? (s : String) : Option Lean.Json :=
+  match Lean.Json.parse s with
+  | .ok j => some j
+  | .error _ => none
+
+/-- Extract a string field from a JSON object. -/
+def getJsonString? (j : Lean.Json) (field : String) : Option String :=
+  match j.getObjVal? field with
+  | .ok (.str s) => some s
+  | _ => none
+
+/-! ## Dressed Facet
+
+Aggregates per-declaration artifacts into module-level JSON. -/
+
+/-- Facet that aggregates per-declaration artifacts into module.json.
+
+    **Elaboration writes:** Per-declaration artifacts to `.lake/build/dressed/{Module/Path}/artifacts/`
+    Each artifact file has format: `{"name": "...", "label": "...", "highlighting": {...}}`
+
+    **This facet reads:** All .json files from artifacts/ directory
+
+    **This facet writes:** `.lake/build/dressed/{Module/Path}/module.json` with format:
+    ```json
+    {"DeclName": {"html": "...", "htmlBase64": "...", "jsonBase64": "..."}}
+    ```
+
+    Handles modules with no @[blueprint] declarations gracefully (empty or missing artifacts/).
 
     Cached by Lake - only rebuilds when module's olean changes. -/
 module_facet dressed (mod : Module) : FilePath := do
   let ws ← getWorkspace
-  let modJob ← mod.olean.fetch
+  let modJob ← mod.lean.fetch  -- Depend on lean facet (ensures elaboration ran)
 
   let buildDir := ws.root.buildDir
-  -- Use full module name path to match Hook.lean's getHighlightingOutputPath
-  let hlFile := (mod.name.components.foldl (init := buildDir / "dressed")
-    fun path component => path / component.toString).withExtension "json"
+  let moduleJsonPath := getModuleJsonPath buildDir mod.name
+  let artifactsDir := getModuleArtifactsDir buildDir mod.name
 
-  modJob.mapM fun _oleanFile => do
-    -- Check if JSON was written during elaboration (by Hook.lean)
-    if ← hlFile.pathExists then
-      -- JSON exists from elaboration-time capture - use it directly
-      pure hlFile
-    else
-      -- Fallback: run subverso-extract-mod for modules that don't use Hook.lean
-      let some extract ← findLeanExe? `«subverso-extract-mod»
-        | error "subverso-extract-mod executable not found"
-      let exeFile ← extract.exe.fetch >>= (·.await)
-      buildFileUnlessUpToDate' hlFile do
-        IO.FS.createDirAll (buildDir / "dressed")
-        proc {
-          cmd := exeFile.toString
-          args := #[mod.name.toString, hlFile.toString]
-          env := ← getAugmentedEnv
-        }
-      pure hlFile
+  modJob.mapM fun _leanArt => do
+    -- Create module directory
+    IO.FS.createDirAll (getModuleDressedDir buildDir mod.name)
 
-def buildModuleBlueprint (mod : Module) (ext : String) (extractArgs : Array String) : FetchM (Job Unit) := do
-  let modJob ← mod.leanArts.fetch
-  let buildDir := (← getRootPackage).buildDir
-  let mainFile := mod.filePath (buildDir / "blueprint" / "module") ext
-  -- Skip if .tex file already exists (generated during dressing with BLUEPRINT_DRESS=1)
-  -- This makes `lake build :blueprint` fast when dressing has already run
-  if ← mainFile.pathExists then
-    modJob.mapM fun _ => pure ()
-  else
-    -- Fall back to extract_blueprint for non-dressed builds
-    let exeJob ← extract_blueprint.fetch
-    let hlJob ← fetch <| mod.facet `dressed  -- Get cached dressed JSON
-    let leanOptions := Lean.toJson mod.leanOptions |>.compress
-    exeJob.bindM fun exeFile => do
-      hlJob.bindM fun hlFile => do  -- Thread through highlighted JSON path
-        modJob.mapM fun _ => do
-          -- The output is a main file plus a list of auxiliary files
-          buildFileUnlessUpToDate' mainFile do
-            proc {
-              cmd := exeFile.toString
-              args := #["single", "--build", buildDir.toString,
-                        "--highlightedJson", hlFile.toString,
-                        "--options", leanOptions, mod.name.toString] ++ extractArgs
-              env := ← getAugmentedEnv
-            }
+    -- Check if artifacts directory exists
+    let artifactsDirExists ← artifactsDir.pathExists
+    if !artifactsDirExists then
+      -- No artifacts - write empty JSON and return
+      IO.FS.writeFile moduleJsonPath "{}"
+      return moduleJsonPath
 
-/-- Build module blueprint with highlighting, falling back to plain on crash. -/
-def buildModuleBlueprintSafe (mod : Module) (ext : String) : FetchM (Job Unit) := do
-  let modJob ← mod.leanArts.fetch
-  let buildDir := (← getRootPackage).buildDir
-  let mainFile := mod.filePath (buildDir / "blueprint" / "module") ext
-  -- Skip if .tex file already exists (generated during dressing with BLUEPRINT_DRESS=1)
-  if ← mainFile.pathExists then
-    modJob.mapM fun _ => pure ()
-  else
-    let exeJob ← extract_blueprint.fetch
-    let hlJob ← fetch <| mod.facet `dressed  -- Get cached dressed JSON
-    let leanOptions := Lean.toJson mod.leanOptions |>.compress
-    exeJob.bindM fun exeFile => do
-      hlJob.bindM fun hlFile => do
-        modJob.mapM fun _ => do
-          buildFileUnlessUpToDate' mainFile do
-            let env ← getAugmentedEnv
-            let baseArgs := #["single", "--build", buildDir.toString,
-                              "--highlightedJson", hlFile.toString,
-                              "--options", leanOptions, mod.name.toString]
-            -- Highlighting is now pre-computed via facet, just run extraction
-            proc {
-              cmd := exeFile.toString
-              args := baseArgs
-              env := env
-            }
+    -- Scan artifacts directory for .json files
+    let entries ← FilePath.readDir artifactsDir
+    let jsonFiles := Array.filter (fun e => e.fileName.endsWith ".json") entries
 
-/-- A facet to extract the blueprint for a module (with syntax highlighting via cached facet). -/
-module_facet blueprint (mod : Module) : Unit := do
-  buildModuleBlueprint mod "tex" #[]
+    if Array.isEmpty jsonFiles then
+      -- No JSON artifacts - write empty JSON
+      IO.FS.writeFile moduleJsonPath "{}"
+      return moduleJsonPath
 
-/-- A facet to extract the blueprint for a module (without syntax highlighting).
-    Use this if SubVerso highlighting causes panics on certain code patterns. -/
-module_facet blueprintPlain (mod : Module) : Unit := do
-  buildModuleBlueprint mod "tex" #[]
+    -- Parse each artifact JSON and build module.json
+    let mut moduleEntries : Array (String × Lean.Json) := #[]
 
-/-- A facet to extract JSON data of blueprint for a module. -/
-module_facet blueprintJson (mod : Module) : Unit := do
-  buildModuleBlueprint mod "json" #["--json"]
+    for entry in jsonFiles do
+      let filePath := artifactsDir / entry.fileName
+      let content ← IO.FS.readFile filePath
 
-/-- A facet to extract the blueprint for a module with highlighting, falling back to plain on crash. -/
-module_facet blueprintSafe (mod : Module) : Unit := do
-  buildModuleBlueprintSafe mod "tex"
+      -- Parse the artifact JSON
+      if let some json := parseJson? content then
+        if let some name := getJsonString? json "name" then
+          -- Extract highlighting if present
+          let highlightingJson := match json.getObjVal? "highlighting" with
+            | .ok hl => hl
+            | .error _ => Lean.Json.null
 
-def buildLibraryBlueprint (lib : LeanLib) (moduleFacet : Lean.Name) (ext : String) (extractArgs : Array String) : FetchM (Job Unit) := do
+          -- Render HTML from highlighting (or empty if no highlighting)
+          let html := if highlightingJson == Lean.Json.null then "" else
+            -- We can't call HtmlRender here (not available in Lake), so store raw JSON
+            -- The html field will be populated by consumers if needed
+            ""
+          let htmlBase64 := if html.isEmpty then "" else ""
+          let jsonBase64 := "" -- Base64 encoding is done by consumers, not here
+
+          -- Build artifact entry
+          let artifactEntry := Lean.Json.mkObj [
+            ("html", Lean.Json.str html),
+            ("htmlBase64", Lean.Json.str htmlBase64),
+            ("jsonBase64", Lean.Json.str jsonBase64),
+            ("highlighting", highlightingJson)
+          ]
+          moduleEntries := moduleEntries.push (name, artifactEntry)
+
+    -- Write module.json
+    let moduleJson := Lean.Json.mkObj moduleEntries.toList
+    IO.FS.writeFile moduleJsonPath moduleJson.compress
+
+    return moduleJsonPath
+
+/-! ## Blueprint Facet
+
+Generates module.tex with LaTeX preamble and \newleannode entries. -/
+
+/-- LaTeX preamble for module header files.
+    Defines \newleannode, \inputleannode, \newleanmodule, \inputleanmodule macros. -/
+def moduleHeaderPreamble : String :=
+  "%%% This file is automatically generated by Dress. %%%
+
+%%% Macro definitions for \\inputleannode, \\inputleanmodule %%%
+
+\\makeatletter
+
+% \\newleannode{name}{latex} defines a new Lean node
+\\providecommand{\\newleannode}[2]{%
+  \\expandafter\\gdef\\csname leannode@#1\\endcsname{#2}}
+% \\inputleannode{name} inputs a Lean node
+\\providecommand{\\inputleannode}[1]{%
+  \\csname leannode@#1\\endcsname}
+
+% \\newleanmodule{module}{latex} defines a new Lean module
+\\providecommand{\\newleanmodule}[2]{%
+  \\expandafter\\gdef\\csname leanmodule@#1\\endcsname{#2}}
+% \\inputleanmodule{module} inputs a Lean module
+\\providecommand{\\inputleanmodule}[1]{%
+  \\csname leanmodule@#1\\endcsname}
+
+\\makeatother
+
+%%% Start of main content %%%"
+
+/-- Facet that generates module.tex from per-declaration artifacts.
+
+    **Depends on:** `dressed` facet (ensures artifacts are aggregated)
+
+    **Reads:** Per-declaration .json files from `.lake/build/dressed/{Module/Path}/artifacts/`
+
+    **Writes:** `.lake/build/dressed/{Module/Path}/module.tex` with:
+    - LaTeX preamble macros (\newleannode, \newleanmodule, etc.)
+    - \newleannode entries for each declaration
+    - Relative \input{} paths to .tex files in artifacts/
+
+    Handles modules with no @[blueprint] declarations gracefully. -/
+module_facet blueprint (mod : Module) : FilePath := do
+  let ws ← getWorkspace
+  let dressedJob ← fetch <| mod.facet `dressed  -- Depend on dressed facet
+
+  let buildDir := ws.root.buildDir
+  let moduleTexPath := getModuleTexPath buildDir mod.name
+  let artifactsDir := getModuleArtifactsDir buildDir mod.name
+
+  dressedJob.mapM fun _moduleJsonPath => do
+    -- Check if artifacts directory exists
+    let artifactsDirExists ← artifactsDir.pathExists
+    if !artifactsDirExists then
+      -- No artifacts - write minimal .tex file
+      IO.FS.writeFile moduleTexPath (moduleHeaderPreamble ++ "\n\n% No @[blueprint] declarations in this module.\n")
+      return moduleTexPath
+
+    -- Scan artifacts directory for .json files to get declaration info
+    let entries ← FilePath.readDir artifactsDir
+    let jsonFiles := Array.filter (fun e => e.fileName.endsWith ".json") entries
+
+    if Array.isEmpty jsonFiles then
+      -- No declarations - write minimal .tex file
+      IO.FS.writeFile moduleTexPath (moduleHeaderPreamble ++ "\n\n% No @[blueprint] declarations in this module.\n")
+      return moduleTexPath
+
+    -- Collect declaration labels from JSON files
+    let mut declLabels : Array String := #[]
+
+    for entry in jsonFiles do
+      let filePath := artifactsDir / entry.fileName
+      let content ← IO.FS.readFile filePath
+      if let some json := parseJson? content then
+        if let some label := getJsonString? json "label" then
+          declLabels := declLabels.push label
+
+    -- Build path to artifacts dir using forward slashes for LaTeX compatibility
+    let artifactsDirPath := getArtifactsDirForLatex mod.name
+
+    -- Generate \newleannode entries
+    let nodeEntries := declLabels.map fun label =>
+      let sanitized := sanitizeLabel label
+      let inputPath := artifactsDirPath ++ "/" ++ sanitized
+      s!"\\newleannode\{{label}}\{\\input\{{inputPath}}}"
+
+    -- Generate \inputleannode entries for module content
+    let inputEntries := declLabels.map fun label =>
+      s!"\\inputleannode\{{label}}"
+
+    let moduleContent := "\n\n".intercalate inputEntries.toList
+    let moduleLatex := s!"\\newleanmodule\{{mod.name}}\{\n{moduleContent}\n}"
+
+    let texContent := moduleHeaderPreamble ++ "\n\n" ++
+      "\n\n".intercalate nodeEntries.toList ++ "\n\n" ++ moduleLatex
+
+    IO.FS.writeFile moduleTexPath texContent
+    return moduleTexPath
+
+/-! ## Library and Package Facets -/
+
+def buildLibraryBlueprint (lib : LeanLib) : FetchM (Job Unit) := do
   let mods ← (← lib.modules.fetch).await
-  let moduleJobs := Job.collectArray <| ← mods.mapM (fetch <| ·.facet moduleFacet)
-  let exeJob ← extract_blueprint.fetch
-  let buildDir := (← getRootPackage).buildDir
-  let outputFile := buildDir / "blueprint" / "library" / lib.name.toString |>.addExtension ext
-  exeJob.bindM fun exeFile => do
-    moduleJobs.mapM fun _ => do
-      buildFileUnlessUpToDate' outputFile do
-        logInfo "Blueprint indexing"
-        proc {
-          cmd := exeFile.toString
-          args := #["index", "--build", buildDir.toString, lib.name.toString, ",".intercalate (mods.map (·.name.toString)).toList] ++ extractArgs
-          env := ← getAugmentedEnv
-        }
+  let moduleJobs := Job.collectArray <| ← mods.mapM (fetch <| ·.facet `blueprint)
+  moduleJobs.mapM fun _ => pure ()
 
-/-- A facet to extract the blueprint for a library (with syntax highlighting). -/
+/-- A facet to build dressed artifacts and blueprint .tex for all modules in a library. -/
 library_facet blueprint (lib : LeanLib) : Unit := do
-  buildLibraryBlueprint lib `blueprint "tex" #[]
+  buildLibraryBlueprint lib
 
-/-- A facet to extract the blueprint for a library (without syntax highlighting). -/
-library_facet blueprintPlain (lib : LeanLib) : Unit := do
-  buildLibraryBlueprint lib `blueprintPlain "tex" #[]
-
-/-- A facet to extract the JSON data for the blueprint for a library. -/
-library_facet blueprintJson (lib : LeanLib) : Unit := do
-  buildLibraryBlueprint lib `blueprintJson "json" #["--json"]
-
-/-- A facet to extract the blueprint for a library with highlighting, falling back to plain per-module. -/
-library_facet blueprintSafe (lib : LeanLib) : Unit := do
-  buildLibraryBlueprint lib `blueprintSafe "tex" #[]
-
-/-- A facet to extract the blueprint for each library in a package (with syntax highlighting). -/
+/-- A facet to build dressed artifacts and blueprint .tex for each library in a package. -/
 package_facet blueprint (pkg : Package) : Unit := do
   let libJobs := Job.collectArray <| ← pkg.leanLibs.mapM (fetch <| ·.facet `blueprint)
   let _ ← libJobs.await
   return .nil
 
-/-- A facet to extract the blueprint for each library in a package (without syntax highlighting). -/
-package_facet blueprintPlain (pkg : Package) : Unit := do
-  let libJobs := Job.collectArray <| ← pkg.leanLibs.mapM (fetch <| ·.facet `blueprintPlain)
-  let _ ← libJobs.await
-  return .nil
-
-/-- A facet to extract the blueprint JSON data for each library in a package. -/
-package_facet blueprintJson (pkg : Package) : Unit := do
-  let libJobs := Job.collectArray <| ← pkg.leanLibs.mapM (fetch <| ·.facet `blueprintJson)
-  let _ ← libJobs.await
-  return .nil
-
-/-- A facet to extract the blueprint for each library with highlighting, falling back to plain per-module. -/
-package_facet blueprintSafe (pkg : Package) : Unit := do
-  let libJobs := Job.collectArray <| ← pkg.leanLibs.mapM (fetch <| ·.facet `blueprintSafe)
-  let _ ← libJobs.await
-  return .nil
+/-! ## Utility Script -/
 
 open IO.Process in
 /-- Run a command, print all outputs, and throw an error if it fails. -/
@@ -206,8 +299,10 @@ private def runCmd (cmd : String) (args : Array String) : ScriptM Unit := do
     Usage: `lake run dress` or `lake run dress MyLib`
 
     The dressed artifacts are written to:
-    - `.lake/build/dressed/{Module/Path}.json` (highlighting data)
-    - `.lake/build/blueprint/module/{Module/Path}.tex` (LaTeX output) -/
+    - `.lake/build/dressed/{Module/Path}/artifacts/{label}.json` (per-declaration)
+    - `.lake/build/dressed/{Module/Path}/artifacts/{label}.tex` (per-declaration LaTeX)
+    - `.lake/build/dressed/{Module/Path}/module.json` (aggregated by dressed facet)
+    - `.lake/build/dressed/{Module/Path}/module.tex` (by blueprint facet) -/
 script dress (args : List String) do
   let lake ← getLake
   -- Create marker file to signal dress mode to Hook.lean

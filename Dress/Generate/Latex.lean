@@ -139,39 +139,6 @@ def generateDeclarationTex (name : Name) (config : Capture.BlueprintConfig)
 
   return out
 
-/-- Write .tex file for a single declaration.
-
-    Writes to `.lake/build/blueprint/module/{Module/Path}.artifacts/{sanitizedLabel}.tex`
-    where the label is sanitized for filesystem use (`:` → `-`).
-
-    @param moduleName The current module name
-    @param latexLabel The LaTeX label for this declaration
-    @param texContent The generated .tex content -/
-def writeDeclarationTex (moduleName : Name) (latexLabel : String) (texContent : String) : IO Unit := do
-  let buildDir : System.FilePath := ".lake" / "build"
-
-  -- Sanitize label for filesystem (replace : with -)
-  let sanitizedLabel := latexLabel.replace ":" "-"
-
-  -- Build module path components
-  let modulePathComponents := moduleName.components.map (·.toString)
-
-  -- Write to .lake/build/blueprint/module/{Module/Path}.artifacts/{label}.tex
-  let blueprintModulePath := modulePathComponents.foldl (init := buildDir / "blueprint" / "module")
-    fun path component => path / component
-  let blueprintArtifactsDir := blueprintModulePath.addExtension "artifacts"
-  let blueprintTexPath := blueprintArtifactsDir / (sanitizedLabel ++ ".tex")
-  IO.FS.createDirAll blueprintArtifactsDir
-  IO.FS.writeFile blueprintTexPath texContent
-
-  -- Also write to .lake/build/dressed/{Module/Path}.artifacts/{label}.tex
-  let dressedModulePath := modulePathComponents.foldl (init := buildDir / "dressed")
-    fun path component => path / component
-  let dressedArtifactsDir := dressedModulePath.addExtension "artifacts"
-  let dressedTexPath := dressedArtifactsDir / (sanitizedLabel ++ ".tex")
-  IO.FS.createDirAll dressedArtifactsDir
-  IO.FS.writeFile dressedTexPath texContent
-
 end Dress.Generate
 
 -- Re-export at Dress namespace for backward compatibility
@@ -180,6 +147,5 @@ namespace Dress
 abbrev declarationHasSorry := Generate.declarationHasSorry
 abbrev getDefaultLatexEnv := Generate.getDefaultLatexEnv
 abbrev generateDeclarationTex := Generate.generateDeclarationTex
-abbrev writeDeclarationTex := Generate.writeDeclarationTex
 
 end Dress

@@ -38,6 +38,17 @@ This module captures this data while it's available.
 - Source positions
 - Pre-computed base64 strings ready for TeX embedding
 
+## Architecture
+
+Artifacts are generated per-declaration during elaboration:
+1. `@[blueprint]` declarations are intercepted by `Capture.ElabRules`
+2. Highlighting is captured from info trees by `Capture.InfoTree`
+3. Per-declaration artifacts are written by `Generate.Declaration`:
+   - `.lake/build/dressed/{Module/Path}/artifacts/{label}.tex`
+   - `.lake/build/dressed/{Module/Path}/artifacts/{label}.html`
+   - `.lake/build/dressed/{Module/Path}/artifacts/{label}.json`
+4. Lake facets aggregate these artifacts for downstream consumers
+
 ## Module Organization
 
 This module re-exports functionality from the following submodules:
@@ -49,7 +60,7 @@ This module re-exports functionality from the following submodules:
 - `Serialize.Html`: HTML serialization
 - `Serialize.Artifacts`: Full dressed artifact format
 - `Generate.Latex`: LaTeX generation for individual declarations
-- `Generate.Module`: Module-level output generation
+- `Generate.Declaration`: Per-declaration artifact writing
 
 ## Usage
 
@@ -66,11 +77,6 @@ theorem my_theorem : ... := by
 
 Run `lake run dress` to generate dressed artifacts. No explicit command is needed
 in source files - export happens automatically when the marker file is present.
-
-**Files generated:** `.lake/build/dressed/{Module/Path}.json` containing:
-- `html`: Pre-rendered HTML string
-- `htmlBase64`: Base64-encoded HTML (for direct TeX embedding)
-- `jsonBase64`: Base64-encoded SubVerso JSON (for backward compatibility)
 -/
 
 open Lean Elab Command Term Meta

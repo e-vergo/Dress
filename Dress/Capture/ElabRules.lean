@@ -9,8 +9,7 @@ import Dress.HtmlRender
 import Dress.Capture.State
 import Dress.Capture.InfoTree
 import Dress.Capture.Config
-import Dress.Generate.Latex
-import Dress.Generate.Module
+import Dress.Generate.Declaration
 
 /-!
 # Elaboration Rules for Blueprint Declarations
@@ -69,24 +68,20 @@ def isDressEnabled : IO Bool := do
   dressEnabledRef.get
 
 /-- Export dressed artifacts if dressing is enabled.
-    Call this after the last declaration in the module. -/
+    DEPRECATED: Artifacts are now written per-declaration during elaboration.
+    Lake facet scans the artifacts/ directory directly. -/
 def exportIfDressEnabled : CommandElabM Unit := do
-  unless (← dressEnabledRef.get) do return
-  let buildDir : System.FilePath := ".lake" / "build"
-  Generate.exportModuleHighlighting buildDir
+  -- No-op: artifacts are written per-declaration now
+  return
 
 /-- Export all captured blueprint highlighting for the current module.
-    Writes to `.lake/build/dressed/`. -/
+    DEPRECATED: Artifacts are now written per-declaration during elaboration. -/
 syntax (name := exportBlueprintHighlighting) "#export_blueprint_highlighting" : command
 
 @[command_elab exportBlueprintHighlighting]
 def elabExportBlueprintHighlighting : CommandElab := fun _stx => do
-  -- Skip if highlighting is disabled
-  unless blueprint.highlighting.get (← getOptions) do return
-
-  -- Get build directory from Lake workspace (default to .lake/build)
-  let buildDir : System.FilePath := ".lake" / "build"
-  Generate.exportModuleHighlighting buildDir
+  -- No-op: artifacts are written per-declaration during elaboration
+  return
 
 /-! ## Declaration Interception Helpers -/
 
@@ -142,11 +137,9 @@ def elabDeclAndCaptureHighlighting (stx : Syntax) (declId : Syntax) (mods : Opti
         let markerFile : System.FilePath := ".lake" / "build" / ".dress"
         let markerExists ← markerFile.pathExists
         let dressEnabled := dressEnv == some "1" || blueprint.dress.get (← getOptions) || markerExists
-        if dressEnabled then
-          let buildDir : System.FilePath := ".lake" / "build"
-          Generate.exportModuleHighlighting buildDir
 
-          -- Generate and write .tex file if mods are available
+        -- Write per-declaration artifacts immediately when dress mode is enabled
+        if dressEnabled then
           if let some modsStx := mods then
             if let some attrStx := extractBlueprintAttrSyntax modsStx then
               try
@@ -154,9 +147,7 @@ def elabDeclAndCaptureHighlighting (stx : Syntax) (declId : Syntax) (mods : Opti
                 trace[blueprint] "Config for {resolvedName}: label={config.latexLabel}, statement={config.statement.isSome}, proof={config.proof.isSome}, latexEnv={config.latexEnv}"
 
                 -- Get highlighting from extension (just captured above)
-                let envAfter ← getEnv
-                let highlighting := dressedDeclExt.getState envAfter |>.find? resolvedName
-                let htmlCode := highlighting.map HtmlRender.renderHighlightedToHtml
+                let highlighting := dressedDeclExt.getState (← getEnv) |>.find? resolvedName
 
                 -- Get source file path
                 let file := (← read).fileName
@@ -165,21 +156,13 @@ def elabDeclAndCaptureHighlighting (stx : Syntax) (declId : Syntax) (mods : Opti
                 let location ← liftTermElabM do
                   Lean.findDeclarationRanges? resolvedName
 
-                -- Generate .tex content
-                let texContent ← Generate.generateDeclarationTex resolvedName config highlighting htmlCode
-                  (some file) (location.map (·.range))
+                -- Write all artifacts (.tex, .html, .json)
+                let label := config.latexLabel.getD resolvedName.toString
+                Generate.writeDeclarationArtifacts resolvedName label config highlighting (some file) (location.map (·.range))
 
-                -- Write .tex file
-                let moduleName := envAfter.header.mainModule
-                let latexLabel := config.latexLabel.getD resolvedName.toString
-                Generate.writeDeclarationTex moduleName latexLabel texContent
-
-                -- Track for module header generation
-                trackDeclaration resolvedName latexLabel
-
-                trace[blueprint] "Wrote .tex for {resolvedName} with label {latexLabel}"
+                trace[blueprint] "Wrote artifacts for {resolvedName} with label {label}"
               catch e =>
-                trace[blueprint.debug] "Failed to generate .tex: {e.toMessageData}"
+                trace[blueprint.debug] "Failed to write declaration artifacts: {e.toMessageData}"
 
 /-! ## Elaboration Rules
 
