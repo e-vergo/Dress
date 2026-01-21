@@ -162,21 +162,27 @@ All artifacts are written to `.lake/build/dressed/{Module/Path}/`:
 | `module.json` | Lake facet | Aggregated Dress format |
 | `module.tex` | Lake facet | Module header with `\input{}` paths |
 
-## CLI Reference
+## CLI Reference (Deprecated)
 
-Dress provides the `extract_blueprint` executable:
+> **Deprecated**: The `extract_blueprint` CLI is deprecated. Use Lake facets instead:
+> ```bash
+> lake build :blueprint                   # Generate for all modules
+> lake build MyProject.MyModule:blueprint # Generate for specific module
+> ```
+
+Dress provides the `extract_blueprint` executable (deprecated):
 
 ```bash
-# Extract single module
+# Extract single module (DEPRECATED)
 lake exe extract_blueprint single MyProject.MyModule
 
-# Extract with pre-computed highlighting
+# Extract with pre-computed highlighting (DEPRECATED)
 lake exe extract_blueprint single --highlightedJson .lake/build/dressed/MyModule.json MyProject.MyModule
 
-# Generate library index
+# Generate library index (DEPRECATED)
 lake exe extract_blueprint index MyLibrary "MyLib.Module1,MyLib.Module2"
 
-# Output JSON instead of LaTeX
+# Output JSON instead of LaTeX (DEPRECATED)
 lake exe extract_blueprint single --json MyProject.MyModule
 ```
 

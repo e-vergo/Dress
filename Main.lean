@@ -17,6 +17,7 @@ def outputBaseDir (buildDir : System.FilePath) : System.FilePath :=
   buildDir / "blueprint"
 
 def runSingleCmd (p : Parsed) : IO UInt32 := do
+  IO.eprintln "Warning: `lake exe extract_blueprint` is deprecated. Use `lake build :blueprint` instead."
   let buildDir := match p.flag? "build" with
     | some dir => dir.as! String
     | none => ".lake/build"
@@ -38,6 +39,7 @@ def runSingleCmd (p : Parsed) : IO UInt32 := do
   return 0
 
 def runIndexCmd (p : Parsed) : IO UInt32 := do
+  IO.eprintln "Warning: `lake exe extract_blueprint` is deprecated. Use `lake build :blueprint` instead."
   let buildDir := match p.flag? "build" with
     | some dir => dir.as! String
     | none => ".lake/build"
