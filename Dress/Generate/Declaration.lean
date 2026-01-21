@@ -14,14 +14,14 @@ import Dress.Generate.Latex
 # Per-Declaration Artifact Generation
 
 This module provides functions for writing per-declaration artifacts during elaboration.
-Each @[blueprint] declaration gets:
-- `{label}.tex` - LaTeX content for the declaration
-- `{label}.html` - Syntax-highlighted HTML
-- `{label}.json` - JSON metadata with highlighting data
+Each @[blueprint] declaration gets its own subdirectory:
+- `{sanitized-label}/decl.tex` - LaTeX content for the declaration
+- `{sanitized-label}/decl.html` - Syntax-highlighted HTML
+- `{sanitized-label}/decl.json` - JSON metadata with highlighting data
 
 ## Output Location
 
-All artifacts are written to `.lake/build/dressed/{Module/Path}/artifacts/`.
+All artifacts are written to `.lake/build/dressed/{Module/Path}/artifacts/{sanitized-label}/`.
 -/
 
 open Lean Elab Command
@@ -45,9 +45,9 @@ def writeDeclarationArtifacts (name : Name) (label : String) (config : Capture.B
   let env ← getEnv
   let moduleName := env.header.mainModule
 
-  -- Get artifacts directory and create it
-  let artifactsDir := Paths.getModuleArtifactsDir buildDir moduleName
-  IO.FS.createDirAll artifactsDir
+  -- Get declaration directory and create it
+  let declDir := Paths.getDeclarationDir buildDir moduleName label
+  IO.FS.createDirAll declDir
 
   -- Write .tex file
   let texContent ← generateDeclarationTex name config highlighting none file location

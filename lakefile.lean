@@ -55,14 +55,14 @@ def getModuleTexPath (buildDir : System.FilePath) (moduleName : Lean.Name) : Sys
 def sanitizeLabel (label : String) : String :=
   label.replace ":" "-"
 
-/-- Get the artifacts directory path relative to blueprint/src/ for LaTeX \input.
-    Returns `../../.lake/build/dressed/{Module/Path}/artifacts`
+/-- Get the declaration directory path relative to blueprint/src/ for LaTeX \input.
+    Returns `../../.lake/build/dressed/{Module/Path}/artifacts/{sanitized-label}`
 
     The `../../` prefix accounts for plastex running from `blueprint/` with
     tex files in `blueprint/src/`. -/
-def getArtifactsDirForLatex (moduleName : Lean.Name) : String :=
+def getDeclarationDirForLatex (moduleName : Lean.Name) (label : String) : String :=
   let modulePathComponents := moduleName.components.map (·.toString)
-  "../../.lake/build/dressed/" ++ "/".intercalate modulePathComponents ++ "/artifacts"
+  "../../.lake/build/dressed/" ++ "/".intercalate modulePathComponents ++ "/artifacts/" ++ sanitizeLabel label
 
 /-! ## JSON Parsing Helpers -/
 
@@ -116,20 +116,27 @@ module_facet dressed (mod : Module) : FilePath := do
       IO.FS.writeFile moduleJsonPath "{}"
       return moduleJsonPath
 
-    -- Scan artifacts directory for .json files
+    -- Scan artifacts directory for subdirectories containing decl.json
     let entries ← FilePath.readDir artifactsDir
-    let jsonFiles := Array.filter (fun e => e.fileName.endsWith ".json") entries
+    -- Filter to directories only
+    let mut declDirs : Array IO.FS.DirEntry := #[]
+    for entry in entries do
+      let entryPath := artifactsDir / entry.fileName
+      if ← entryPath.isDir then
+        let jsonPath := entryPath / "decl.json"
+        if ← jsonPath.pathExists then
+          declDirs := declDirs.push entry
 
-    if Array.isEmpty jsonFiles then
-      -- No JSON artifacts - write empty JSON
+    if Array.isEmpty declDirs then
+      -- No declaration directories - write empty JSON
       IO.FS.writeFile moduleJsonPath "{}"
       return moduleJsonPath
 
     -- Parse each artifact JSON and build module.json
     let mut moduleEntries : Array (String × Lean.Json) := #[]
 
-    for entry in jsonFiles do
-      let filePath := artifactsDir / entry.fileName
+    for entry in declDirs do
+      let filePath := artifactsDir / entry.fileName / "decl.json"
       let content ← IO.FS.readFile filePath
 
       -- Parse the artifact JSON
@@ -222,11 +229,18 @@ module_facet blueprint (mod : Module) : FilePath := do
       IO.FS.writeFile moduleTexPath (moduleHeaderPreamble ++ "\n\n% No @[blueprint] declarations in this module.\n")
       return moduleTexPath
 
-    -- Scan artifacts directory for .json files to get declaration info
+    -- Scan artifacts directory for subdirectories containing decl.json
     let entries ← FilePath.readDir artifactsDir
-    let jsonFiles := Array.filter (fun e => e.fileName.endsWith ".json") entries
+    -- Filter to directories only
+    let mut declDirs : Array IO.FS.DirEntry := #[]
+    for entry in entries do
+      let entryPath := artifactsDir / entry.fileName
+      if ← entryPath.isDir then
+        let jsonPath := entryPath / "decl.json"
+        if ← jsonPath.pathExists then
+          declDirs := declDirs.push entry
 
-    if Array.isEmpty jsonFiles then
+    if Array.isEmpty declDirs then
       -- No declarations - write minimal .tex file
       IO.FS.writeFile moduleTexPath (moduleHeaderPreamble ++ "\n\n% No @[blueprint] declarations in this module.\n")
       return moduleTexPath
@@ -234,20 +248,16 @@ module_facet blueprint (mod : Module) : FilePath := do
     -- Collect declaration labels from JSON files
     let mut declLabels : Array String := #[]
 
-    for entry in jsonFiles do
-      let filePath := artifactsDir / entry.fileName
+    for entry in declDirs do
+      let filePath := artifactsDir / entry.fileName / "decl.json"
       let content ← IO.FS.readFile filePath
       if let some json := parseJson? content then
         if let some label := getJsonString? json "label" then
           declLabels := declLabels.push label
 
-    -- Build path to artifacts dir using forward slashes for LaTeX compatibility
-    let artifactsDirPath := getArtifactsDirForLatex mod.name
-
     -- Generate \newleannode entries
     let nodeEntries := declLabels.map fun label =>
-      let sanitized := sanitizeLabel label
-      let inputPath := artifactsDirPath ++ "/" ++ sanitized
+      let inputPath := getDeclarationDirForLatex mod.name label ++ "/decl"
       s!"\\newleannode\{{label}}\{\\input\{{inputPath}}}"
 
     -- Generate \inputleannode entries for module content
@@ -299,8 +309,9 @@ private def runCmd (cmd : String) (args : Array String) : ScriptM Unit := do
     Usage: `lake run dress` or `lake run dress MyLib`
 
     The dressed artifacts are written to:
-    - `.lake/build/dressed/{Module/Path}/artifacts/{label}.json` (per-declaration)
-    - `.lake/build/dressed/{Module/Path}/artifacts/{label}.tex` (per-declaration LaTeX)
+    - `.lake/build/dressed/{Module/Path}/artifacts/{sanitized-label}/decl.json` (per-declaration)
+    - `.lake/build/dressed/{Module/Path}/artifacts/{sanitized-label}/decl.tex` (per-declaration LaTeX)
+    - `.lake/build/dressed/{Module/Path}/artifacts/{sanitized-label}/decl.html` (per-declaration HTML)
     - `.lake/build/dressed/{Module/Path}/module.json` (aggregated by dressed facet)
     - `.lake/build/dressed/{Module/Path}/module.tex` (by blueprint facet) -/
 script dress (args : List String) do
