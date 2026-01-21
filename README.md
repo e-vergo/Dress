@@ -29,23 +29,24 @@ These artifacts integrate with [leanblueprint](https://github.com/PatrickMassot/
 ┌─────────────────────────────────────────────────────────────────────┐
 │                         DRESS                                       │
 │                                                                     │
-│  Capture/     ──► Intercepts elaboration of @[blueprint] decls      │
-│       │           ElabRules.lean, InfoTree.lean, Config.lean        │
-│       │                                                             │
-│  Serialize/   ──► JSON and HTML output formats                      │
-│       │           Json.lean, Html.lean, Artifacts.lean              │
-│       │                                                             │
-│  Generate/    ──► LaTeX with embedded base64 data                   │
-│                   Latex.lean, Module.lean                           │
+│  Phase 1: Elaboration-time (per @[blueprint] declaration)           │
+│    Capture/     ──► Intercepts elaboration, captures info trees     │
+│    Generate/    ──► Writes per-declaration artifacts immediately    │
+│                                                                     │
+│  Phase 2: Lake facet (per module, after compilation)                │
+│    lakefile     ──► Aggregates declarations into module-level files │
 └─────────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │                    OUTPUT ARTIFACTS                                 │
 │                                                                     │
-│  .lake/build/dressed/{Module/Path}.json     ← Dressed artifacts     │
-│  .lake/build/blueprint/module/{Module}.tex  ← LaTeX fragments       │
-│  .lake/build/blueprint/module/{Module}.artifacts/*.tex              │
+│  .lake/build/dressed/{Module/Path}/                                 │
+│      {label}/decl.tex      ← Per-declaration LaTeX                  │
+│      {label}/decl.html     ← Per-declaration HTML                   │
+│      {label}/decl.json     ← Per-declaration highlighting           │
+│      module.json           ← Aggregated Dress format (Lake facet)   │
+│      module.tex            ← Module header (Lake facet)             │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -64,18 +65,19 @@ Dress/
     Html.lean                 # HTML serialization
     Artifacts.lean            # Dressed artifact format (html, htmlBase64, jsonBase64)
 
-  Generate/                   # LaTeX and module output
+  Generate/                   # LaTeX and artifact output
     Latex.lean                # Per-declaration LaTeX generation
-    Module.lean               # Module-level output and export
+    Declaration.lean          # Per-declaration artifact writer (tex, html, json)
+    Module.lean               # Module-level utilities
 
   Base64.lean                 # RFC 4648 Base64 encoding
   Core.lean                   # Core types (NodeWithPos, splitAtDefinitionAssign)
   Highlighting.lean           # Source highlighting utilities
   HtmlRender.lean             # Verso HTML rendering wrapper
   Hook.lean                   # Main entry point, re-exports submodules
+  Paths.lean                  # Path utilities for artifact locations
   Output.lean                 # #show_blueprint commands
   Load.lean                   # Module loading utilities
-  SubVersoExtract.lean        # subverso-extract-mod integration
   Content.lean                # Content extraction utilities
 ```
 
@@ -136,13 +138,29 @@ lake build :blueprint
 
 ## Output Files
 
-| Path | Description |
-|------|-------------|
-| `.lake/build/dressed/{Module/Path}.json` | Dressed artifacts with `html`, `htmlBase64`, `jsonBase64` |
-| `.lake/build/dressed/{Module/Path}.subverso.json` | SubVerso Module format (for compatibility) |
-| `.lake/build/blueprint/module/{Module/Path}.tex` | Per-module LaTeX with all declarations |
-| `.lake/build/blueprint/module/{Module/Path}.artifacts/{label}.tex` | Individual declaration LaTeX files |
-| `.lake/build/blueprint/library/{Library}.tex` | Library index with `\input{}` directives |
+All artifacts are written to `.lake/build/dressed/{Module/Path}/`:
+
+```
+.lake/build/dressed/MyProject/MyModule/
+├── thm-main/
+│   ├── decl.tex       # LaTeX with \lean{}, \leanok, base64 data
+│   ├── decl.html      # Syntax-highlighted HTML with hover data
+│   └── decl.json      # {"name": "...", "label": "...", "highlighting": {...}}
+├── lem-helper/
+│   ├── decl.tex
+│   ├── decl.html
+│   └── decl.json
+├── module.json        # Aggregated: {"DeclName": {"html", "htmlBase64", "jsonBase64"}}
+└── module.tex         # \newleannode entries + \input{} directives
+```
+
+| Path | Written By | Description |
+|------|------------|-------------|
+| `{label}/decl.tex` | Elaboration | Per-declaration LaTeX |
+| `{label}/decl.html` | Elaboration | Per-declaration HTML with hover |
+| `{label}/decl.json` | Elaboration | Per-declaration highlighting data |
+| `module.json` | Lake facet | Aggregated Dress format |
+| `module.tex` | Lake facet | Module header with `\input{}` paths |
 
 ## CLI Reference
 
@@ -164,35 +182,53 @@ lake exe extract_blueprint single --json MyProject.MyModule
 
 ## Lake Facets
 
-Dress defines several Lake facets for build integration:
+Dress defines Lake facets for build integration:
 
 | Facet | Level | Description |
 |-------|-------|-------------|
-| `dressed` | Module | Generate highlighting JSON |
-| `blueprint` | Module/Library/Package | Generate LaTeX with highlighting |
-| `blueprintPlain` | Module/Library/Package | Generate LaTeX without highlighting |
-| `blueprintJson` | Module/Library/Package | Generate JSON output |
-| `blueprintSafe` | Module/Library/Package | Generate with fallback on errors |
+| `dressed` | Module | Aggregate per-declaration artifacts into `module.json` |
+| `blueprint` | Module/Library/Package | Generate `module.tex` with `\input{}` paths |
+
+Example usage:
+```bash
+lake build MyProject.MyModule:dressed   # Generate module.json
+lake build MyProject.MyModule:blueprint # Generate module.tex
+lake build :blueprint                   # Generate for all modules
+```
 
 ## How It Works
 
-### Elaboration-Time Capture
+### Two-Phase Architecture
 
-Info trees (containing type information for hover tooltips) are ephemeral—they exist only during elaboration. Dress hooks into the elaboration process to capture this data before it's discarded:
+Info trees (containing type information for hover tooltips) are ephemeral—they exist only during elaboration. Dress uses a two-phase approach:
 
-1. **Hook registration**: `Capture/ElabRules.lean` registers `elab_rules` that fire after declarations
-2. **Marker detection**: Checks for `.lake/build/.dress` file or `blueprint.dress` option
-3. **Capture**: Calls SubVerso's `highlightIncludingUnparsed` on the declaration syntax
-4. **Render**: Converts highlighting to HTML via Verso
-5. **Export**: Writes JSON and LaTeX artifacts to `.lake/build/`
+**Phase 1: Elaboration-time capture** (per `@[blueprint]` declaration)
+1. `Capture/ElabRules.lean` registers `elab_rules` that fire after declarations
+2. Checks for `.lake/build/.dress` marker file
+3. Calls SubVerso's `highlightIncludingUnparsed` to capture highlighting
+4. Immediately writes per-declaration artifacts (`decl.tex`, `decl.html`, `decl.json`)
 
-### Dressed Artifact Format
+**Phase 2: Lake facet aggregation** (per module, after compilation)
+1. `dressed` facet scans declaration subdirectories for `decl.json` files
+2. Parses each to extract name, label, and highlighting data
+3. Aggregates into `module.json` (Dress format for leanblueprint)
+4. `blueprint` facet generates `module.tex` with `\input{}` paths
 
-The `.json` files contain per-declaration entries:
+### Artifact Formats
 
+**Per-declaration JSON** (`{label}/decl.json`):
 ```json
 {
-  "Module.declName": {
+  "name": "MyProject.MyModule.myTheorem",
+  "label": "thm:my-theorem",
+  "highlighting": { /* SubVerso Highlighted structure */ }
+}
+```
+
+**Module JSON** (`module.json` - aggregated by Lake facet):
+```json
+{
+  "MyProject.MyModule.myTheorem": {
     "html": "<span class='hl'>...</span>",
     "htmlBase64": "PHNwYW4gY2xhc3M9...",
     "jsonBase64": "eyJraW5kIjoic2Vx..."
