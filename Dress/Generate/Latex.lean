@@ -32,6 +32,16 @@ open SubVerso.Highlighting
 
 namespace Dress.Generate
 
+/-- Merge two hover JSON objects. Both are `{"id": "html", ...}` format. -/
+def mergeHoverJson (a b : String) : String :=
+  if a == "{}" || a.isEmpty then b
+  else if b == "{}" || b.isEmpty then a
+  else
+    -- Strip outer braces, concatenate with comma, re-wrap
+    let aInner := (a.drop 1).dropEnd 1
+    let bInner := (b.drop 1).dropEnd 1
+    s!"\{{aInner}, {bInner}}"
+
 /-- Check if a declaration contains sorry (uses `sorryAx`).
     This is a simple check that examines the declaration's value expression.
     DEPRECATED: Use `Architect.Node.inferUses` instead which returns `InferredUses.leanOk`. -/
@@ -103,15 +113,17 @@ def generateDeclarationTex (name : Name) (config : Capture.BlueprintConfig)
     let sigBase64 := Base64.encodeString sigHtml
     out := out ++ s!"\\leansignaturesourcehtml\{{sigBase64}}\n"
 
-    -- Render proof body if present (hovers not used - separate ID space would conflict)
+    -- Render proof body if present - WITH HOVERS
+    let mut proofHoverJson := "{}"
     if let some proofHl := bodyHl then
-      let proofHtml := HtmlRender.renderHighlightedToHtml proofHl
+      let (proofHtml, proofHovers) := HtmlRender.renderHighlightedWithHovers proofHl
+      proofHoverJson := proofHovers
       let proofBase64 := Base64.encodeString proofHtml
       out := out ++ s!"\\leanproofsourcehtml\{{proofBase64}}\n"
 
-    -- Emit signature hover data as base64-encoded JSON
-    -- (Signature hovers are most useful - variable types, constant docs)
-    let hoverBase64 := Base64.encodeString sigHoverJson
+    -- Merge signature and proof body hover data
+    let mergedHoverJson := mergeHoverJson sigHoverJson proofHoverJson
+    let hoverBase64 := Base64.encodeString mergedHoverJson
     out := out ++ s!"\\leanhoverdata\{{hoverBase64}}\n"
 
   -- Uses (from config, not inferred)
@@ -189,15 +201,17 @@ def generateDeclarationTexFromNode (name : Name) (node : Architect.Node)
     let sigBase64 := Base64.encodeString sigHtml
     out := out ++ s!"\\leansignaturesourcehtml\{{sigBase64}}\n"
 
-    -- Render proof body if present (hovers not used - separate ID space would conflict)
+    -- Render proof body if present - WITH HOVERS
+    let mut proofHoverJson := "{}"
     if let some proofHl := bodyHl then
-      let proofHtml := HtmlRender.renderHighlightedToHtml proofHl
+      let (proofHtml, proofHovers) := HtmlRender.renderHighlightedWithHovers proofHl
+      proofHoverJson := proofHovers
       let proofBase64 := Base64.encodeString proofHtml
       out := out ++ s!"\\leanproofsourcehtml\{{proofBase64}}\n"
 
-    -- Emit signature hover data as base64-encoded JSON
-    -- (Signature hovers are most useful - variable types, constant docs)
-    let hoverBase64 := Base64.encodeString sigHoverJson
+    -- Merge signature and proof body hover data
+    let mergedHoverJson := mergeHoverJson sigHoverJson proofHoverJson
+    let hoverBase64 := Base64.encodeString mergedHoverJson
     out := out ++ s!"\\leanhoverdata\{{hoverBase64}}\n"
 
   -- Uses (from inferred statement uses)
