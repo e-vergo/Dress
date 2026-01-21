@@ -38,15 +38,7 @@ structure BlueprintConfig where
   trace : Bool := false
 deriving Repr, Inhabited
 
-/-- Check if declModifiers contains a @[blueprint] attribute.
-
-    The @[blueprint] attribute is parsed by `Lean.Parser.Attr.simple`, which has structure:
-    - attrInst[0] = attrKind (scoped/local/global)
-    - attrInst[1] = the attribute syntax with kind `Lean.Parser.Attr.simple`
-    - attrInst[1][0] = the identifier (e.g., "blueprint")
-    - attrInst[1][1] = optional priority/arguments
-
-    We check if the identifier name is "blueprint". -/
+/-- Check if declModifiers contains a @[blueprint] attribute. -/
 def hasBlueprintAttr (mods : Syntax) : Bool :=
   -- declModifiers[1] is the optional attributes
   let attrs? := mods[1]?
@@ -63,20 +55,10 @@ def hasBlueprintAttr (mods : Syntax) : Bool :=
       attrInstances.getArgs.any fun attrInst =>
         -- attrInst structure:
         --   attrInst[0] = attrKind (scoped/local/global)
-        --   attrInst[1] = the actual attribute (kind = Lean.Parser.Attr.simple for simple attributes)
-        -- For Attr.simple, attrInst[1][0] is the identifier
-        let attrSyntax? := attrInst[1]?
-        match attrSyntax? with
-        | none => false
-        | some attrSyntax =>
-          -- Check if it's a simple attribute with name "blueprint"
-          if attrSyntax.getKind == `Lean.Parser.Attr.simple then
-            -- attrSyntax[0] is the identifier
-            attrSyntax[0]?.map (·.getId == `blueprint) |>.getD false
-          else
-            -- For custom attribute syntax kinds (like Architect.blueprint)
-            attrSyntax.getKind == `Architect.blueprint || attrSyntax.getKind == `blueprint
-
+        --   attrInst[1] = the actual attribute (kind = Architect.blueprint for @[blueprint ...])
+        -- Check attrInst[1].kind for the attribute name
+        (attrInst[1]?.map (·.getKind == `Architect.blueprint) |>.getD false) ||
+        (attrInst[1]?.map (·.getKind == `blueprint) |>.getD false)
 
 /-- Extract the @[blueprint ...] attribute syntax from declModifiers.
 
