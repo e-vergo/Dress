@@ -29,21 +29,54 @@ These artifacts integrate with [leanblueprint](https://github.com/PatrickMassot/
 ┌─────────────────────────────────────────────────────────────────────┐
 │                         DRESS                                       │
 │                                                                     │
-│  Hook.lean ──► Intercepts elaboration of @[blueprint] declarations  │
+│  Capture/     ──► Intercepts elaboration of @[blueprint] decls      │
+│       │           ElabRules.lean, InfoTree.lean, Config.lean        │
 │       │                                                             │
-│       ├──► SubVerso: Capture highlighting from info trees           │
-│       ├──► Verso: Render HTML with hover tooltips                   │
-│       └──► Output: Generate LaTeX with embedded base64 data         │
+│  Serialize/   ──► JSON and HTML output formats                      │
+│       │           Json.lean, Html.lean, Artifacts.lean              │
+│       │                                                             │
+│  Generate/    ──► LaTeX with embedded base64 data                   │
+│                   Latex.lean, Module.lean                           │
 └─────────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │                    OUTPUT ARTIFACTS                                 │
 │                                                                     │
-│  .lake/build/dressed/{Module/Path}.json     ← Highlighting data     │
+│  .lake/build/dressed/{Module/Path}.json     ← Dressed artifacts     │
 │  .lake/build/blueprint/module/{Module}.tex  ← LaTeX fragments       │
 │  .lake/build/blueprint/module/{Module}.artifacts/*.tex              │
 └─────────────────────────────────────────────────────────────────────┘
+```
+
+## Module Structure
+
+```
+Dress/
+  Capture/                    # Elaboration-time artifact capture
+    State.lean                # IO.Ref state management
+    InfoTree.lean             # Environment extension, info tree capture
+    Config.lean               # Blueprint config parsing
+    ElabRules.lean            # elab_rules for @[blueprint] declarations
+
+  Serialize/                  # Output format generation
+    Json.lean                 # SubVerso JSON serialization
+    Html.lean                 # HTML serialization
+    Artifacts.lean            # Dressed artifact format (html, htmlBase64, jsonBase64)
+
+  Generate/                   # LaTeX and module output
+    Latex.lean                # Per-declaration LaTeX generation
+    Module.lean               # Module-level output and export
+
+  Base64.lean                 # RFC 4648 Base64 encoding
+  Core.lean                   # Core types (NodeWithPos, splitAtDefinitionAssign)
+  Highlighting.lean           # Source highlighting utilities
+  HtmlRender.lean             # Verso HTML rendering wrapper
+  Hook.lean                   # Main entry point, re-exports submodules
+  Output.lean                 # #show_blueprint commands
+  Load.lean                   # Module loading utilities
+  SubVersoExtract.lean        # subverso-extract-mod integration
+  Content.lean                # Content extraction utilities
 ```
 
 ## Installation
@@ -105,7 +138,8 @@ lake build :blueprint
 
 | Path | Description |
 |------|-------------|
-| `.lake/build/dressed/{Module/Path}.json` | Per-module highlighting data (SubVerso format) |
+| `.lake/build/dressed/{Module/Path}.json` | Dressed artifacts with `html`, `htmlBase64`, `jsonBase64` |
+| `.lake/build/dressed/{Module/Path}.subverso.json` | SubVerso Module format (for compatibility) |
 | `.lake/build/blueprint/module/{Module/Path}.tex` | Per-module LaTeX with all declarations |
 | `.lake/build/blueprint/module/{Module/Path}.artifacts/{label}.tex` | Individual declaration LaTeX files |
 | `.lake/build/blueprint/library/{Library}.tex` | Library index with `\input{}` directives |
@@ -146,25 +180,41 @@ Dress defines several Lake facets for build integration:
 
 Info trees (containing type information for hover tooltips) are ephemeral—they exist only during elaboration. Dress hooks into the elaboration process to capture this data before it's discarded:
 
-1. **Hook registration**: `Hook.lean` registers `elab_rules` that fire after declarations
+1. **Hook registration**: `Capture/ElabRules.lean` registers `elab_rules` that fire after declarations
 2. **Marker detection**: Checks for `.lake/build/.dress` file or `blueprint.dress` option
 3. **Capture**: Calls SubVerso's `highlightIncludingUnparsed` on the declaration syntax
 4. **Render**: Converts highlighting to HTML via Verso
 5. **Export**: Writes JSON and LaTeX artifacts to `.lake/build/`
+
+### Dressed Artifact Format
+
+The `.json` files contain per-declaration entries:
+
+```json
+{
+  "Module.declName": {
+    "html": "<span class='hl'>...</span>",
+    "htmlBase64": "PHNwYW4gY2xhc3M9...",
+    "jsonBase64": "eyJraW5kIjoic2Vx..."
+  }
+}
+```
 
 ### LaTeX Format
 
 Generated `.tex` files use leanblueprint macros:
 
 ```latex
-\begin{definition}[Block Diagonal Matrix]\label{def:blockDiag2}\lean{blockDiag2}\leanok
-\uses{lem:blockDiag2-mul, lem:blockDiag2-pow}
-Given matrices $A$ and $B$, construct the block diagonal...
-\leanHover{base64-encoded-html}{base64-encoded-json}
-\end{definition}
+\begin{theorem}\label{thm:my-theorem}\lean{myTheorem}\leanok
+\leansignaturesourcehtml{base64-encoded-signature-html}
+\leanproofsourcehtml{base64-encoded-proof-html}
+\leanhoverdata{base64-encoded-hover-json}
+The statement text from @[blueprint (statement := ...)]
+\end{theorem}
+\begin{proof}\leanok
+The proof text from @[blueprint (proof := ...)]
+\end{proof}
 ```
-
-The `\leanHover` macro embeds pre-rendered HTML that leanblueprint extracts for interactive display.
 
 ## Dependencies
 
