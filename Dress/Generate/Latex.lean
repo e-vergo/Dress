@@ -8,6 +8,7 @@ import Dress.Core
 import Dress.Base64
 import Dress.HtmlRender
 import Dress.Capture.Config
+import Architect
 
 /-!
 # LaTeX Generation
@@ -32,7 +33,8 @@ open SubVerso.Highlighting
 namespace Dress.Generate
 
 /-- Check if a declaration contains sorry (uses `sorryAx`).
-    This is a simple check that examines the declaration's value expression. -/
+    This is a simple check that examines the declaration's value expression.
+    DEPRECATED: Use `Architect.Node.inferUses` instead which returns `InferredUses.leanOk`. -/
 def declarationHasSorry (name : Name) : CommandElabM Bool := do
   let env ← getEnv
   let some info := env.find? name | return true  -- If not found, assume sorry
@@ -84,13 +86,14 @@ def generateDeclarationTex (name : Name) (config : Capture.BlueprintConfig)
   out := out ++ s!"\\label\{{latexLabel}}\n"
   out := out ++ s!"\\lean\{{name}}\n"
 
-  -- Position info
-  if let (some f, some loc) := (file, location) then
-    let posStr := s!"{f}|{loc.pos.line}|{loc.pos.column}|{loc.endPos.line}|{loc.endPos.column}"
-    out := out ++ s!"\\leanposition\{{posStr}}\n"
-
   -- Embed syntax highlighting data (base64-encoded HTML) with hover info
+  -- Note: \leanposition is only emitted when highlighting succeeds, because leanblueprint
+  -- expects \leansignaturesourcehtml to be present when \leanposition is present
   if let some hl := highlighting then
+    -- Position info (only emit with highlighting to satisfy leanblueprint constraint)
+    if let (some f, some loc) := (file, location) then
+      let posStr := s!"{f}|{loc.pos.line}|{loc.pos.column}|{loc.endPos.line}|{loc.endPos.column}"
+      out := out ++ s!"\\leanposition\{{posStr}}\n"
     -- Split into signature and proof body
     let hasProof := config.proof.isSome
     let (sigHl, bodyHl) := splitAtDefinitionAssign hl (splitAtAssign := hasProof)
@@ -139,6 +142,93 @@ def generateDeclarationTex (name : Name) (config : Capture.BlueprintConfig)
 
   return out
 
+/-- Generate .tex content for a single @[blueprint] declaration from an Architect.Node.
+    This function reads from the LeanArchitect environment extension instead of re-parsing.
+    Uses `Architect.Node.inferUses` to compute dependencies and leanok status.
+
+    @param name The fully qualified declaration name
+    @param node The Architect.Node from blueprintExt
+    @param highlighting Optional SubVerso highlighted code
+    @param htmlCode Optional pre-rendered HTML (unused, kept for API compatibility)
+    @param file Optional source file path
+    @param location Optional declaration position range -/
+def generateDeclarationTexFromNode (name : Name) (node : Architect.Node)
+    (highlighting : Option Highlighted) (_htmlCode : Option String)
+    (file : Option System.FilePath) (location : Option DeclarationRange)
+    : CommandElabM String := do
+  let latexLabel := node.latexLabel
+  let defaultEnv ← getDefaultLatexEnv name
+  let latexEnv := if node.statement.latexEnv.isEmpty then defaultEnv else node.statement.latexEnv
+
+  -- Infer uses and leanok status from Architect
+  let (statementUses, proofUses) ← node.inferUses
+
+  let mut out := ""
+
+  -- Begin environment with statement
+  out := out ++ s!"\\begin\{{latexEnv}}\n"
+
+  -- Label and lean name
+  out := out ++ s!"\\label\{{latexLabel}}\n"
+  out := out ++ s!"\\lean\{{name}}\n"
+
+  -- Embed syntax highlighting data (base64-encoded HTML) with hover info
+  -- Note: \leanposition is only emitted when highlighting succeeds, because leanblueprint
+  -- expects \leansignaturesourcehtml to be present when \leanposition is present
+  if let some hl := highlighting then
+    -- Position info (only emit with highlighting to satisfy leanblueprint constraint)
+    if let (some f, some loc) := (file, location) then
+      let posStr := s!"{f}|{loc.pos.line}|{loc.pos.column}|{loc.endPos.line}|{loc.endPos.column}"
+      out := out ++ s!"\\leanposition\{{posStr}}\n"
+    -- Split into signature and proof body
+    let hasProof := node.proof.isSome
+    let (sigHl, bodyHl) := splitAtDefinitionAssign hl (splitAtAssign := hasProof)
+
+    -- Render signature to HTML with hovers and base64 encode
+    let (sigHtml, sigHoverJson) := HtmlRender.renderHighlightedWithHovers sigHl
+    let sigBase64 := Base64.encodeString sigHtml
+    out := out ++ s!"\\leansignaturesourcehtml\{{sigBase64}}\n"
+
+    -- Render proof body if present (hovers not used - separate ID space would conflict)
+    if let some proofHl := bodyHl then
+      let proofHtml := HtmlRender.renderHighlightedToHtml proofHl
+      let proofBase64 := Base64.encodeString proofHtml
+      out := out ++ s!"\\leanproofsourcehtml\{{proofBase64}}\n"
+
+    -- Emit signature hover data as base64-encoded JSON
+    -- (Signature hovers are most useful - variable types, constant docs)
+    let hoverBase64 := Base64.encodeString sigHoverJson
+    out := out ++ s!"\\leanhoverdata\{{hoverBase64}}\n"
+
+  -- Uses (from inferred statement uses)
+  unless statementUses.uses.isEmpty do
+    out := out ++ s!"\\uses\{{",".intercalate statementUses.uses.toList}}\n"
+
+  -- leanok if statement has no sorry
+  if statementUses.leanOk then
+    out := out ++ "\\leanok\n"
+
+  -- Statement text (from node.statement.text)
+  if !node.statement.text.isEmpty then
+    out := out ++ node.statement.text.trimAscii.toString ++ "\n"
+
+  out := out ++ s!"\\end\{{latexEnv}}\n"
+
+  -- Proof section if present
+  if let some proofPart := node.proof then
+    out := out ++ "\\begin{proof}\n"
+    -- Uses (from inferred proof uses)
+    unless proofUses.uses.isEmpty do
+      out := out ++ s!"\\uses\{{",".intercalate proofUses.uses.toList}}\n"
+    -- Proof is leanok if proof has no sorry
+    if proofUses.leanOk then
+      out := out ++ "\\leanok\n"
+    if !proofPart.text.isEmpty then
+      out := out ++ proofPart.text.trimAscii.toString ++ "\n"
+    out := out ++ "\\end{proof}\n"
+
+  return out
+
 end Dress.Generate
 
 -- Re-export at Dress namespace for backward compatibility
@@ -147,5 +237,6 @@ namespace Dress
 abbrev declarationHasSorry := Generate.declarationHasSorry
 abbrev getDefaultLatexEnv := Generate.getDefaultLatexEnv
 abbrev generateDeclarationTex := Generate.generateDeclarationTex
+abbrev generateDeclarationTexFromNode := Generate.generateDeclarationTexFromNode
 
 end Dress

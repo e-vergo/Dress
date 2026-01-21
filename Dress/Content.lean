@@ -42,7 +42,7 @@ def BlueprintContent.order (l r : BlueprintContent) : Bool :=
 def getMainModuleBlueprintContents : CoreM (Array BlueprintContent) := do
   let env ← getEnv
   let nodes ← (Architect.blueprintExt.getEntries env).toArray.mapM fun (_, node) =>
-    BlueprintContent.node <$> node.toNodeWithPos
+    BlueprintContent.node <$> toDressNodeWithPos node
   let modDocs := (Architect.getMainModuleBlueprintDoc env).toArray.map BlueprintContent.modDoc
   return (nodes ++ modDocs).qsort BlueprintContent.order
 
@@ -57,7 +57,7 @@ def getBlueprintContents (module : Name)
   let env ← getEnv
   let some modIdx := env.getModuleIdx? module | return #[]
   let nodes ← (Architect.blueprintExt.getModuleEntries env modIdx).mapM fun (_, node) =>
-    BlueprintContent.node <$> node.toNodeWithPos highlightingMap htmlMap
+    BlueprintContent.node <$> toDressNodeWithPos node highlightingMap htmlMap
   let modDocs := (Architect.getModuleBlueprintDoc? env module).getD #[] |>.map BlueprintContent.modDoc
   return (nodes ++ modDocs).qsort BlueprintContent.order
 

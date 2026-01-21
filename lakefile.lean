@@ -12,17 +12,14 @@ lean_exe extract_blueprint where
   root := `Main
   supportInterpreter := true
 
-require LeanArchitect from git
-  "https://github.com/e-vergo/LeanArchitect" @ "main"
+require LeanArchitect from ".." / "LeanArchitect"
 
 require Cli from git
   "https://github.com/mhuisi/lean4-cli" @ "v4.27.0-rc1"
 
-require subverso from git
-  "https://github.com/leanprover/subverso" @ "main"
+require subverso from ".." / "subverso"
 
-require verso from git
-  "https://github.com/leanprover/verso.git" @ "main"
+require verso from ".." / "verso"
 
 /-! ## Path Helpers
 

@@ -10,6 +10,7 @@ import Dress.Capture.State
 import Dress.Capture.InfoTree
 import Dress.Capture.Config
 import Dress.Generate.Declaration
+import Architect.Basic
 
 /-!
 # Elaboration Rules for Blueprint Declarations
@@ -114,8 +115,9 @@ def withCaptureHookFlag (act : CommandElabM α) : CommandElabM α := do
 
     @param stx The full declaration syntax
     @param declId The declaration identifier syntax
-    @param mods The declModifiers syntax (optional, used to extract blueprint config) -/
-def elabDeclAndCaptureHighlighting (stx : Syntax) (declId : Syntax) (mods : Option Syntax := none)
+    @param _mods The declModifiers syntax (optional, kept for backward compatibility but no longer used;
+                 we now read from LeanArchitect's blueprintExt instead of re-parsing) -/
+def elabDeclAndCaptureHighlighting (stx : Syntax) (declId : Syntax) (_mods : Option Syntax := none)
     : CommandElabM Unit := do
   -- Run standard command elaboration with the flag set to prevent recursion
   withCaptureHookFlag do
@@ -140,29 +142,31 @@ def elabDeclAndCaptureHighlighting (stx : Syntax) (declId : Syntax) (mods : Opti
 
         -- Write per-declaration artifacts immediately when dress mode is enabled
         if dressEnabled then
-          if let some modsStx := mods then
-            if let some attrStx := extractBlueprintAttrSyntax modsStx then
-              try
-                let config ← parseBlueprintConfig attrStx
-                trace[blueprint] "Config for {resolvedName}: label={config.latexLabel}, statement={config.statement.isSome}, proof={config.proof.isSome}, latexEnv={config.latexEnv}"
+          -- Read from LeanArchitect's blueprintExt instead of re-parsing attribute syntax
+          let env ← getEnv
+          match Architect.blueprintExt.find? env resolvedName with
+          | some node =>
+            try
+              trace[blueprint] "Node for {resolvedName}: label={node.latexLabel}, statement.text={node.statement.text.take 50}, proof={node.proof.isSome}, latexEnv={node.statement.latexEnv}"
 
-                -- Get highlighting from extension (just captured above)
-                let highlighting := dressedDeclExt.getState (← getEnv) |>.find? resolvedName
+              -- Get highlighting from extension (just captured above)
+              let highlighting := dressedDeclExt.getState env |>.find? resolvedName
 
-                -- Get source file path
-                let file := (← read).fileName
+              -- Get source file path
+              let file := (← read).fileName
 
-                -- Get declaration location
-                let location ← liftTermElabM do
-                  Lean.findDeclarationRanges? resolvedName
+              -- Get declaration location
+              let location ← liftTermElabM do
+                Lean.findDeclarationRanges? resolvedName
 
-                -- Write all artifacts (.tex, .html, .json)
-                let label := config.latexLabel.getD resolvedName.toString
-                Generate.writeDeclarationArtifacts resolvedName label config highlighting (some file) (location.map (·.range))
+              -- Write all artifacts (.tex, .html, .json) using the Node-based function
+              Generate.writeDeclarationArtifactsFromNode resolvedName node highlighting (some file) (location.map (·.range))
 
-                trace[blueprint] "Wrote artifacts for {resolvedName} with label {label}"
-              catch e =>
-                trace[blueprint.debug] "Failed to write declaration artifacts: {e.toMessageData}"
+              trace[blueprint] "Wrote artifacts for {resolvedName} with label {node.latexLabel}"
+            catch e =>
+              trace[blueprint.debug] "Failed to write declaration artifacts: {e.toMessageData}"
+          | none =>
+            trace[blueprint] "blueprintExt not populated for {resolvedName}"
 
 /-! ## Elaboration Rules
 

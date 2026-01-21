@@ -258,6 +258,15 @@ The proof text from @[blueprint (proof := ...)]
 \end{proof}
 ```
 
+### Signature/Proof Splitting
+
+Dress automatically splits theorem code at the `:=` boundary:
+
+- **Signature** (`\leansignaturesourcehtml`) — Everything up to and including `:=` plus the `by` keyword
+- **Proof body** (`\leanproofsourcehtml`) — The tactic proof after `by`
+
+This enables leanblueprint to render the signature always visible while the proof body can be toggled, synchronized with the LaTeX proof expansion.
+
 ## Dependencies
 
 - [LeanArchitect](https://github.com/e-vergo/LeanArchitect) - `@[blueprint]` attribute and metadata

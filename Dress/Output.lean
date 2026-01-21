@@ -2,122 +2,36 @@
 Copyright (c) 2025 Dress contributors. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 -/
-import Architect.CollectUsed
+import Architect
 import Dress.Content
-import Architect.Tactic
 import Dress.HtmlRender
 import Dress.Hook
 import Dress.Paths
 
 open Lean
 
--- Define functions in Architect namespace so dot notation works
+/-!
+# Dress Output
+
+This module provides LaTeX and JSON output functionality for Dress, extending
+the base functionality from Architect with syntax highlighting support.
+
+Dress extends `Architect.NodeWithPos` with additional fields for highlighted code,
+so the `toLatex` function here emits additional macros like `\leansourcehtml{}`.
+-/
+
+-- Define functions in Architect namespace so dot notation works with Architect types
 namespace Architect
 
-section ToLatex
-
-/-!
-Conversion from Lean nodes to LaTeX.
--/
-
-abbrev Latex := String
-
--- Note: base64 encoding functions are provided by Dress.Hook (encodeBase64, stringToBase64)
-
-/-!
-We convert nodes to LaTeX.
-
-The output provides the following macros:
-- `\inputleannode{name}`: Inputs the theorem or definition with label `name`.
-- `\inputleanmodule{Module}`: Inputs the entire module (containing nodes and blueprint module docstrings in it) with module name `Module`.
-
-The structure of the output of a module `A` with nodes `b` and `c` is:
-```
-A.tex
-A/b.tex
-A/c.tex
-```
-
-The first is a header file that defines the macro `\inputleannode{name}`, which simply inputs `A/name.tex`.
-The rest are artifact files that contain the LaTeX of each node.
--/
-
-def Latex.input (file : System.FilePath) : Latex :=
-  -- Windows prints filepaths using backslashes (\) instead of forward slashes (/).
-  -- LaTeX interprets these as control sequences, so we replace backslashes with forward slashes.
-  "\\input{" ++ "/".intercalate file.components ++ "}"
-
 variable {m} [Monad m] [MonadEnv m] [MonadError m]
-
-def preprocessLatex (s : String) : String :=
-  s
-
-structure InferredUses where
-  uses : Array String
-  leanOk : Bool
-
-def InferredUses.empty : InferredUses := { uses := #[], leanOk := true }
-
-def InferredUses.merge (inferredUsess : Array InferredUses) : InferredUses :=
-  { uses := inferredUsess.flatMap (·.uses), leanOk := inferredUsess.all (·.leanOk) }
-
-def NodePart.inferUses (part : NodePart) (latexLabel : String) (used : NameSet) : m InferredUses := do
-  let env ← getEnv
-  let uses := part.uses.foldl (·.insert ·) used |>.filter (· ∉ part.excludes)
-  let mut usesLabels : Std.HashSet String := .ofArray <|
-    uses.toArray.filterMap fun c => (blueprintExt.find? env c).map (·.latexLabel)
-  usesLabels := usesLabels.erase latexLabel
-  usesLabels := part.usesLabels.foldl (·.insert ·) usesLabels |>.filter (· ∉ part.excludesLabels)
-  return { uses := usesLabels.toArray, leanOk := !uses.contains ``sorryAx }
-
-/-- Infer the used constants of a node as (statement uses, proof uses). -/
-def Node.inferUses (node : Node) : m (InferredUses × InferredUses) := do
-  let (statementUsed, proofUsed) ← collectUsed node.name
-  if let some proof := node.proof then
-    return (
-      ← node.statement.inferUses node.latexLabel statementUsed,
-      ← proof.inferUses node.latexLabel proofUsed
-    )
-  else
-    return (
-      ← node.statement.inferUses node.latexLabel (statementUsed ∪ proofUsed),
-      InferredUses.empty
-    )
-
-/-- Merges and converts an array of `NodePart` to LaTeX. It is assumed that `part ∈ allParts`. -/
-def NodePart.toLatex (part : NodePart) (allParts : Array NodePart := #[part]) (inferredUses : InferredUses)
-    (title : Option String := none) (additionalContent : String := "") (defaultText : String := "") : m Latex := do
-  let mut out := ""
-  out := out ++ "\\begin{" ++ part.latexEnv ++ "}"
-  if let some title := title then
-    out := out ++ s!"[{preprocessLatex title}]"
-  out := out ++ "\n"
-
-  -- Take union of uses
-  unless inferredUses.uses.isEmpty do
-    out := out ++ "\\uses{" ++ ",".intercalate inferredUses.uses.toList ++ "}\n"
-
-  out := out ++ additionalContent
-
-  -- \leanok only if all parts are leanOk
-  if inferredUses.leanOk then
-    out := out ++ "\\leanok\n"
-
-  -- If not specified, the main text defaults to the first non-empty text in the parts
-  let text := if !part.text.isEmpty then part.text else
-    allParts.findSome? (fun p => if !p.text.isEmpty then p.text else none) |>.getD defaultText
-  let textLatex := (preprocessLatex text).trimAscii
-  unless textLatex.isEmpty do
-    out := out ++ textLatex ++ "\n"
-
-  out := out ++ "\\end{" ++ part.latexEnv ++ "}\n"
-  return out
 
 private def isMathlibOk (name : Name) : m Bool := do
   let some modIdx := (← getEnv).getModuleIdxFor? name | return false
   let module := (← getEnv).allImportedModuleNames[modIdx]!
   return [`Init, `Lean, `Std, `Batteries, `Mathlib].any fun pre => pre.isPrefixOf module
 
+/-- Convert a Dress.NodeWithPos to LaTeX, including syntax highlighting.
+    This extends the base Architect output with highlighting macros. -/
 def _root_.Dress.NodeWithPos.toLatex (node : Dress.NodeWithPos) : m Latex := do
   -- In the output, we merge the Lean nodes corresponding to the same LaTeX label.
   let env ← getEnv
@@ -194,22 +108,8 @@ def _root_.Dress.NodeWithPos.toLatex (node : Dress.NodeWithPos) : m Latex := do
 
   return mainContent
 
-/-- `LatexArtifact` represents an auxiliary output file for a single node,
-containing its label (which is its filename) and content. -/
-structure LatexArtifact where
-  id : String
-  content : Latex
-
-/-- `LatexOutput` represents the extracted LaTeX from a module, consisting of a header file and auxiliary files. -/
-structure LatexOutput where
-  /-- The header file requires the path to the artifacts directory. -/
-  header : System.FilePath → Latex
-  artifacts : Array LatexArtifact
-
 def _root_.Dress.NodeWithPos.toLatexArtifact (node : Dress.NodeWithPos) : m LatexArtifact := do
   return { id := node.latexLabel, content := ← node.toLatex }
-
-end ToLatex
 
 end Architect
 
@@ -312,7 +212,7 @@ open Elab Command in
   | `(command| #show_blueprint $id:ident) => do
     let name ← liftCoreM <| realizeGlobalConstNoOverloadWithInfo id
     let some node := Architect.blueprintExt.find? (← getEnv) name | throwError "{name} does not have @[blueprint] attribute"
-    let art ← (← liftCoreM node.toNodeWithPos).toLatexArtifact
+    let art ← (← liftCoreM <| toDressNodeWithPos node).toLatexArtifact
     logInfo m!"{art.content}"
   | `(command| #show_blueprint $label:str) => do
     let env ← getEnv
@@ -378,7 +278,7 @@ open Elab Command in
   | `(command| #show_blueprint_json $id:ident) => do
     let name ← liftCoreM <| realizeGlobalConstNoOverloadWithInfo id
     let some node := Architect.blueprintExt.find? (← getEnv) name | throwError "{name} does not have @[blueprint] attribute"
-    let json := nodeWithPosToJson (← liftCoreM node.toNodeWithPos)
+    let json := nodeWithPosToJson (← liftCoreM <| toDressNodeWithPos node)
     logInfo m!"{json}"
   | `(command| #show_blueprint_json $label:str) => do
     let env ← getEnv

@@ -65,7 +65,9 @@ def captureHighlightingFromInfoTrees
     let hl ← highlightIncludingUnparsed stx messages trees suppressedNamespaces
     return some hl
   catch _ =>
-    -- Silently fail - highlighting is an optional enhancement
+    -- SubVerso throws "not original, can't highlight: Lean.SourceInfo.synthetic" for some
+    -- declarations (e.g., those with term-mode proofs or certain macro-generated syntax).
+    -- Silently fail - highlighting is an optional enhancement.
     return none
 
 /-- Capture highlighting for a declaration using current command state.

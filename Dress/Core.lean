@@ -150,11 +150,13 @@ def splitAtDefinitionAssign (hl : Highlighted) (splitAtAssign : Bool := true)
           body := body ++ node
       return (signature, if body.isEmpty then none else some body)
 
-/-- Convert an Architect.Node to NodeWithPos, looking up position and highlighted code information.
+/-- Convert an Architect.Node to Dress.NodeWithPos, looking up position and highlighted code information.
     Highlighted code is looked up from `highlightingMap` (from subverso-extract-mod) first,
     then falls back to the environment extension (Hook mechanism during elaboration).
-    Pre-rendered HTML is looked up from `htmlMap` (from .html.json files). -/
-def _root_.Architect.Node.toNodeWithPos (node : Architect.Node)
+    Pre-rendered HTML is looked up from `htmlMap` (from .html.json files).
+
+    Note: This extends the base `Architect.Node.toNodeWithPos` with syntax highlighting fields. -/
+def toDressNodeWithPos (node : Architect.Node)
     (highlightingMap : NameMap Highlighted := {})
     (htmlMap : NameMap String := {})
     : CoreM NodeWithPos := do
