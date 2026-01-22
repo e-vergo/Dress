@@ -15,7 +15,7 @@
    "type": "git",
    "subDir": null,
    "scope": "",
-   "rev": "dafccae2b4c0c588ea816c2885b187fab640beef",
+   "rev": "9746c9e6210d6958060b1cab1bd15be20f02bc55",
    "name": "subverso",
    "manifestFile": "lake-manifest.json",
    "inputRev": "tactic-hover-support",
