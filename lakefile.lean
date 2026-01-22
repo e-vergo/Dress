@@ -19,7 +19,7 @@ require Cli from git
   "https://github.com/mhuisi/lean4-cli" @ "v4.27.0-rc1"
 
 require subverso from git
-  "https://github.com/e-vergo/subverso.git" @ "main"
+  "https://github.com/e-vergo/subverso.git" @ "tactic-hover-support"
 
 require verso from git
   "https://github.com/leanprover/verso.git" @ "main"
