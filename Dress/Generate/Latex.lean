@@ -7,7 +7,6 @@ import SubVerso.Highlighting
 import Dress.Core
 import Dress.Base64
 import Dress.HtmlRender
-import Dress.Capture.Config
 import Architect
 
 /-!
@@ -42,20 +41,6 @@ def mergeHoverJson (a b : String) : String :=
     let bInner := (b.drop 1).dropEnd 1
     s!"\{{aInner}, {bInner}}"
 
-/-- Check if a declaration contains sorry (uses `sorryAx`).
-    This is a simple check that examines the declaration's value expression.
-    DEPRECATED: Use `Architect.Node.inferUses` instead which returns `InferredUses.leanOk`. -/
-def declarationHasSorry (name : Name) : CommandElabM Bool := do
-  let env ← getEnv
-  let some info := env.find? name | return true  -- If not found, assume sorry
-  -- Check if the value expression contains sorryAx
-  let checkExpr (e : Expr) : Bool := e.getUsedConstants.contains ``sorryAx
-  match info with
-  | .defnInfo v => return checkExpr v.value
-  | .thmInfo v => return checkExpr v.value
-  | .opaqueInfo v => return checkExpr v.value
-  | _ => return false
-
 /-- Determine the appropriate LaTeX environment for a declaration.
     Returns "theorem" for theorem-like declarations, "definition" otherwise. -/
 def getDefaultLatexEnv (name : Name) : CommandElabM String := do
@@ -69,90 +54,6 @@ def getDefaultLatexEnv (name : Name) : CommandElabM String := do
   | .ctorInfo _ => return "definition"
   | .recInfo _ => return "definition"
   | _ => return "theorem"
-
-/-- Generate .tex content for a single @[blueprint] declaration during dressing.
-    Uses already-captured highlighting and parsed config.
-
-    @param name The fully qualified declaration name
-    @param config The parsed blueprint configuration
-    @param highlighting Optional SubVerso highlighted code
-    @param htmlCode Optional pre-rendered HTML (unused, kept for API compatibility)
-    @param file Optional source file path
-    @param location Optional declaration position range -/
-def generateDeclarationTex (name : Name) (config : Capture.BlueprintConfig)
-    (highlighting : Option Highlighted) (_htmlCode : Option String)
-    (file : Option System.FilePath) (location : Option DeclarationRange)
-    : CommandElabM String := do
-  let latexLabel := config.latexLabel.getD name.toString
-  let defaultEnv ← getDefaultLatexEnv name
-  let latexEnv := config.latexEnv.getD defaultEnv
-
-  let mut out := ""
-
-  -- Begin environment with statement
-  out := out ++ s!"\\begin\{{latexEnv}}\n"
-
-  -- Label and lean name
-  out := out ++ s!"\\label\{{latexLabel}}\n"
-  out := out ++ s!"\\lean\{{name}}\n"
-
-  -- Embed syntax highlighting data (base64-encoded HTML) with hover info
-  -- Note: \leanposition is only emitted when highlighting succeeds, because leanblueprint
-  -- expects \leansignaturesourcehtml to be present when \leanposition is present
-  if let some hl := highlighting then
-    -- Position info (only emit with highlighting to satisfy leanblueprint constraint)
-    if let (some f, some loc) := (file, location) then
-      let posStr := s!"{f}|{loc.pos.line}|{loc.pos.column}|{loc.endPos.line}|{loc.endPos.column}"
-      out := out ++ s!"\\leanposition\{{posStr}}\n"
-    -- Split into signature and proof body
-    let hasProof := config.proof.isSome
-    let (sigHl, bodyHl) := splitAtDefinitionAssign hl (splitAtAssign := hasProof)
-
-    -- Render signature to HTML with hovers and base64 encode
-    let (sigHtml, sigHoverJson) := HtmlRender.renderHighlightedWithHovers sigHl
-    let sigBase64 := Base64.encodeString sigHtml
-    out := out ++ s!"\\leansignaturesourcehtml\{{sigBase64}}\n"
-
-    -- Render proof body if present - WITH HOVERS
-    let mut proofHoverJson := "{}"
-    if let some proofHl := bodyHl then
-      let (proofHtml, proofHovers) := HtmlRender.renderHighlightedWithHovers proofHl
-      proofHoverJson := proofHovers
-      let proofBase64 := Base64.encodeString proofHtml
-      out := out ++ s!"\\leanproofsourcehtml\{{proofBase64}}\n"
-
-    -- Merge signature and proof body hover data
-    let mergedHoverJson := mergeHoverJson sigHoverJson proofHoverJson
-    let hoverBase64 := Base64.encodeString mergedHoverJson
-    out := out ++ s!"\\leanhoverdata\{{hoverBase64}}\n"
-
-  -- Uses (from config, not inferred)
-  unless config.usesLabels.isEmpty do
-    out := out ++ s!"\\uses\{{",".intercalate config.usesLabels.toList}}\n"
-
-  -- Check for sorry
-  let hasSorry ← declarationHasSorry name
-  if !hasSorry then
-    out := out ++ "\\leanok\n"
-
-  -- Statement text (from config or empty)
-  if let some stmt := config.statement then
-    out := out ++ stmt.trimAscii.toString ++ "\n"
-
-  out := out ++ s!"\\end\{{latexEnv}}\n"
-
-  -- Proof section if present
-  if let some proofText := config.proof then
-    out := out ++ "\\begin{proof}\n"
-    unless config.proofUsesLabels.isEmpty do
-      out := out ++ s!"\\uses\{{",".intercalate config.proofUsesLabels.toList}}\n"
-    -- Proof is leanok if main declaration is leanok
-    if !hasSorry then
-      out := out ++ "\\leanok\n"
-    out := out ++ proofText.trimAscii.toString ++ "\n"
-    out := out ++ "\\end{proof}\n"
-
-  return out
 
 /-- Generate .tex content for a single @[blueprint] declaration from an Architect.Node.
     This function reads from the LeanArchitect environment extension instead of re-parsing.
@@ -197,14 +98,16 @@ def generateDeclarationTexFromNode (name : Name) (node : Architect.Node)
     let (sigHl, bodyHl) := splitAtDefinitionAssign hl (splitAtAssign := hasProof)
 
     -- Render signature to HTML with hovers and base64 encode
-    let (sigHtml, sigHoverJson) := HtmlRender.renderHighlightedWithHovers sigHl
+    -- Use stateful renderer so proof body IDs continue from signature IDs
+    let (sigHtml, sigHoverJson, sigState) := HtmlRender.renderHighlightedWithState sigHl
     let sigBase64 := Base64.encodeString sigHtml
     out := out ++ s!"\\leansignaturesourcehtml\{{sigBase64}}\n"
 
     -- Render proof body if present - WITH HOVERS
+    -- Continue hover ID numbering from signature to avoid collisions
     let mut proofHoverJson := "{}"
     if let some proofHl := bodyHl then
-      let (proofHtml, proofHovers) := HtmlRender.renderHighlightedWithHovers proofHl
+      let (proofHtml, proofHovers, _) := HtmlRender.renderHighlightedWithState proofHl sigState
       proofHoverJson := proofHovers
       let proofBase64 := Base64.encodeString proofHtml
       out := out ++ s!"\\leanproofsourcehtml\{{proofBase64}}\n"
@@ -245,12 +148,10 @@ def generateDeclarationTexFromNode (name : Name) (node : Architect.Node)
 
 end Dress.Generate
 
--- Re-export at Dress namespace for backward compatibility
+-- Re-export at Dress namespace for convenience
 namespace Dress
 
-abbrev declarationHasSorry := Generate.declarationHasSorry
 abbrev getDefaultLatexEnv := Generate.getDefaultLatexEnv
-abbrev generateDeclarationTex := Generate.generateDeclarationTex
 abbrev generateDeclarationTexFromNode := Generate.generateDeclarationTexFromNode
 
 end Dress

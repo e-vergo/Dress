@@ -21,22 +21,34 @@ open Verso.Output
 
 namespace Dress.HtmlRender
 
+/-- Default context for rendering highlighted code. -/
+def defaultContext : HighlightHtmlM.Context Genre.none := {
+  linkTargets := {}
+  traverseContext := ()
+  definitionIds := {}
+  options := {}
+}
+
 /-- Render highlighted code to HTML string and hover data JSON.
 
 Returns (html, hoverJson) where hoverJson maps hover IDs to their content.
 -/
 def renderHighlightedWithHovers (hl : SubVerso.Highlighting.Highlighted) : String × String :=
-  let linkTargets : LinkTargets Unit := {}
-  let context : HighlightHtmlM.Context Genre.none := {
-    linkTargets := linkTargets
-    traverseContext := ()
-    definitionIds := {}
-    options := {}
-  }
   let initialState : Hover.State Html := .empty
-  let (html, finalState) := (hl.toHtml).run context |>.run initialState
+  let (html, finalState) := (hl.toHtml).run defaultContext |>.run initialState
   let hoverJson := finalState.dedup.docJson.compress
   (html.asString (breakLines := false), hoverJson)
+
+/-- Render highlighted code with an initial state, returning the final state.
+
+This allows chaining multiple renders with continuous hover ID numbering.
+Returns (html, hoverJson, finalState) where finalState can be passed to subsequent renders.
+-/
+def renderHighlightedWithState (hl : SubVerso.Highlighting.Highlighted)
+    (initialState : Hover.State Html := .empty) : String × String × Hover.State Html :=
+  let (html, finalState) := (hl.toHtml).run defaultContext |>.run initialState
+  let hoverJson := finalState.dedup.docJson.compress
+  (html.asString (breakLines := false), hoverJson, finalState)
 
 /-- Render highlighted code to HTML string using Verso's production-quality renderer.
 
