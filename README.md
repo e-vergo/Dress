@@ -1,5 +1,9 @@
 # Dress
 
+> **Experience Prototype**: This project is part of an experimental exploration of enhanced tooling for Lean mathematical blueprints. It integrates with forks of [SubVerso](https://github.com/e-vergo/subverso), [LeanArchitect](https://github.com/e-vergo/LeanArchitect), and [leanblueprint](https://github.com/e-vergo/leanblueprint) to enable side-by-side LaTeX/Lean display with interactive hover tooltips and proof toggling.
+
+---
+
 **Dress** is an artifact generator for Lean 4 mathematical blueprints. It transforms declarations marked with `@[blueprint]` (from [LeanArchitect](https://github.com/e-vergo/LeanArchitect)) into richly-annotated LaTeX and HTML output with syntax highlighting and interactive hover tooltips.
 
 ## Overview
