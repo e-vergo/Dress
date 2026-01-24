@@ -31,16 +31,6 @@ open SubVerso.Highlighting
 
 namespace Dress.Generate
 
-/-- Merge two hover JSON objects. Both are `{"id": "html", ...}` format. -/
-def mergeHoverJson (a b : String) : String :=
-  if a == "{}" || a.isEmpty then b
-  else if b == "{}" || b.isEmpty then a
-  else
-    -- Strip outer braces, concatenate with comma, re-wrap
-    let aInner := (a.drop 1).dropEnd 1
-    let bInner := (b.drop 1).dropEnd 1
-    s!"\{{aInner}, {bInner}}"
-
 /-- Determine the appropriate LaTeX environment for a declaration.
     Returns "theorem" for theorem-like declarations, "definition" otherwise. -/
 def getDefaultLatexEnv (name : Name) : CommandElabM String := do
@@ -112,9 +102,12 @@ def generateDeclarationTexFromNode (name : Name) (node : Architect.Node)
       let proofBase64 := Base64.encodeString proofHtml
       out := out ++ s!"\\leanproofsourcehtml\{{proofBase64}}\n"
 
-    -- Merge signature and proof body hover data
-    let mergedHoverJson := mergeHoverJson sigHoverJson proofHoverJson
-    let hoverBase64 := Base64.encodeString mergedHoverJson
+    -- Use proof hover data if present (it already includes signature hovers due to state chaining)
+    -- Otherwise use signature hover data
+    let finalHoverJson := if proofHoverJson != "{}" && !proofHoverJson.isEmpty
+                          then proofHoverJson
+                          else sigHoverJson
+    let hoverBase64 := Base64.encodeString finalHoverJson
     out := out ++ s!"\\leanhoverdata\{{hoverBase64}}\n"
 
   -- Uses (from inferred statement uses)
