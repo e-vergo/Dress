@@ -82,30 +82,13 @@ def writeDeclarationArtifactsFromNode (name : Name) (node : Architect.Node)
   IO.FS.writeFile jsonPath jsonContent
   trace[blueprint.debug] "Wrote {jsonPath}"
 
-  -- Also write copies to nodes/{label}/ for label-indexed lookup
-  let nodeDir := Paths.getNodeDir buildDir label
-  IO.FS.createDirAll nodeDir
-
-  -- Write node .tex file
-  let nodeTexPath := Paths.getNodeTexPath buildDir label
-  IO.FS.writeFile nodeTexPath texContent
-  trace[blueprint.debug] "Wrote {nodeTexPath}"
-
-  -- Write node .html and .hovers.json if we have highlighting
-  if let some hl := highlighting then
-    let (htmlContent, hoverJson) := HtmlRender.renderHighlightedWithHovers hl
-    let nodeHtmlPath := Paths.getNodeHtmlPath buildDir label
-    IO.FS.writeFile nodeHtmlPath htmlContent
-    trace[blueprint.debug] "Wrote {nodeHtmlPath}"
-
-    let nodeHoversPath := Paths.getNodeHoversPath buildDir label
-    IO.FS.writeFile nodeHoversPath hoverJson
-    trace[blueprint.debug] "Wrote {nodeHoversPath}"
-
-  -- Write node .json file
-  let nodeJsonPath := Paths.getNodeJsonPath buildDir label
-  IO.FS.writeFile nodeJsonPath jsonContent
-  trace[blueprint.debug] "Wrote {nodeJsonPath}"
+  -- Write manifest.entry for later aggregation into manifest.json
+  -- This allows Runway (or a Lake facet) to build a label -> path mapping
+  let manifestEntryPath := Paths.getManifestEntryPath buildDir moduleName label
+  let relativePath := Paths.getDeclarationRelativePath moduleName label
+  let manifestEntryContent := s!"\{\"label\": \"{label}\", \"path\": \"{relativePath}\"}"
+  IO.FS.writeFile manifestEntryPath manifestEntryContent
+  trace[blueprint.debug] "Wrote {manifestEntryPath}"
 
 end Dress.Generate
 

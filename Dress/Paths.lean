@@ -15,19 +15,17 @@ Centralizing paths here prevents duplication and ensures consistency.
 All artifacts live under `.lake/build/dressed/`:
 
 ```
-.lake/build/dressed/{Module/Path}/
-├── module.json              # Module-level metadata
-├── module.tex               # Module-level LaTeX header
-└── {sanitized-label}/       # Per-declaration artifacts
-    ├── decl.tex             # Declaration LaTeX
-    ├── decl.html            # Declaration HTML
-    └── decl.json            # Declaration JSON
-
-.lake/build/dressed/nodes/{label}/  # Label-indexed copies for easy lookup
-├── decl.tex
-├── decl.html
-├── decl.json
-└── decl.hovers.json
+.lake/build/dressed/
+├── manifest.json            # Label -> path mapping for all declarations
+└── {Module/Path}/
+    ├── module.json          # Module-level metadata
+    ├── module.tex           # Module-level LaTeX header
+    └── {sanitized-label}/   # Per-declaration artifacts
+        ├── decl.tex         # Declaration LaTeX
+        ├── decl.html        # Declaration HTML
+        ├── decl.json        # Declaration JSON
+        ├── decl.hovers.json # Hover tooltip data
+        └── manifest.entry   # Entry for manifest aggregation
 ```
 -/
 
@@ -104,34 +102,26 @@ def getModuleDirForLatex (moduleName : Lean.Name) : String :=
   let modulePathComponents := moduleName.components.map (·.toString)
   "../../.lake/build/dressed/" ++ "/".intercalate modulePathComponents
 
-/-- Get the nodes directory for label-indexed artifact copies.
-    Returns `.lake/build/dressed/nodes/` -/
-def getNodesDir (buildDir : System.FilePath) : System.FilePath :=
-  buildDir / "dressed" / "nodes"
+/-- Get the path for the global manifest file that maps labels to their per-module paths.
+    Returns `.lake/build/dressed/manifest.json`
 
-/-- Get the directory for a specific node by label.
-    Returns `.lake/build/dressed/nodes/{label}/` -/
-def getNodeDir (buildDir : System.FilePath) (label : String) : System.FilePath :=
-  getNodesDir buildDir / label
+    This manifest is aggregated from individual manifest.entry files in each declaration directory. -/
+def getManifestPath (buildDir : System.FilePath) : System.FilePath :=
+  buildDir / "dressed" / "manifest.json"
 
-/-- Get the path for a node's .tex file by label.
-    Returns `.lake/build/dressed/nodes/{label}/decl.tex` -/
-def getNodeTexPath (buildDir : System.FilePath) (label : String) : System.FilePath :=
-  getNodeDir buildDir label / "decl.tex"
+/-- Get the path for a declaration's manifest entry file.
+    Returns `.lake/build/dressed/{Module/Path}/{sanitized-label}/manifest.entry`
 
-/-- Get the path for a node's .html file by label.
-    Returns `.lake/build/dressed/nodes/{label}/decl.html` -/
-def getNodeHtmlPath (buildDir : System.FilePath) (label : String) : System.FilePath :=
-  getNodeDir buildDir label / "decl.html"
+    Each declaration writes a small entry file that can later be aggregated into manifest.json. -/
+def getManifestEntryPath (buildDir : System.FilePath) (moduleName : Lean.Name) (label : String) : System.FilePath :=
+  getDeclarationDir buildDir moduleName label / "manifest.entry"
 
-/-- Get the path for a node's .json file by label.
-    Returns `.lake/build/dressed/nodes/{label}/decl.json` -/
-def getNodeJsonPath (buildDir : System.FilePath) (label : String) : System.FilePath :=
-  getNodeDir buildDir label / "decl.json"
+/-- Get the relative path from dressed/ to a declaration directory.
+    Returns `{Module/Path}/{sanitized-label}` (no leading or trailing slashes).
 
-/-- Get the path for a node's hover data JSON file by label.
-    Returns `.lake/build/dressed/nodes/{label}/decl.hovers.json` -/
-def getNodeHoversPath (buildDir : System.FilePath) (label : String) : System.FilePath :=
-  getNodeDir buildDir label / "decl.hovers.json"
+    Used for manifest entries to provide paths relative to the dressed/ directory. -/
+def getDeclarationRelativePath (moduleName : Lean.Name) (label : String) : String :=
+  let modulePathComponents := moduleName.components.map (·.toString)
+  "/".intercalate modulePathComponents ++ "/" ++ sanitizeLabel label
 
 end Dress.Paths
