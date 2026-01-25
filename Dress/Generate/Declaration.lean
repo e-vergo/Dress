@@ -58,12 +58,18 @@ def writeDeclarationArtifactsFromNode (name : Name) (node : Architect.Node)
   IO.FS.writeFile texPath texContent
   trace[blueprint.debug] "Wrote {texPath}"
 
-  -- Write .html file if we have highlighting
+  -- Write .html file and hover data if we have highlighting
   if let some hl := highlighting then
-    let htmlContent := HtmlRender.renderHighlightedToHtml hl
+    -- Use renderHighlightedWithHovers to get both HTML and hover JSON
+    let (htmlContent, hoverJson) := HtmlRender.renderHighlightedWithHovers hl
     let htmlPath := Paths.getDeclarationHtmlPath buildDir moduleName label
     IO.FS.writeFile htmlPath htmlContent
     trace[blueprint.debug] "Wrote {htmlPath}"
+
+    -- Write hover data JSON for Tippy.js tooltips
+    let hoversPath := Paths.getDeclarationHoversPath buildDir moduleName label
+    IO.FS.writeFile hoversPath hoverJson
+    trace[blueprint.debug] "Wrote {hoversPath}"
 
   -- Write .json file with metadata
   let jsonPath := Paths.getDeclarationJsonPath buildDir moduleName label

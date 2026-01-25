@@ -73,6 +73,11 @@ def getDeclarationHtmlPath (buildDir : System.FilePath) (moduleName : Lean.Name)
 def getDeclarationJsonPath (buildDir : System.FilePath) (moduleName : Lean.Name) (label : String) : System.FilePath :=
   getDeclarationDir buildDir moduleName label / "decl.json"
 
+/-- Get the path for a declaration's hover data JSON file.
+    Returns `.lake/build/dressed/{Module/Path}/{sanitized-label}/decl.hovers.json` -/
+def getDeclarationHoversPath (buildDir : System.FilePath) (moduleName : Lean.Name) (label : String) : System.FilePath :=
+  getDeclarationDir buildDir moduleName label / "decl.hovers.json"
+
 /-- Get the declaration directory path relative to blueprint/src/ for LaTeX \input.
     Returns `../../.lake/build/dressed/{Module/Path}/{sanitized-label}`
 
