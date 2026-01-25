@@ -22,6 +22,12 @@ All artifacts live under `.lake/build/dressed/`:
     ├── decl.tex             # Declaration LaTeX
     ├── decl.html            # Declaration HTML
     └── decl.json            # Declaration JSON
+
+.lake/build/dressed/nodes/{label}/  # Label-indexed copies for easy lookup
+├── decl.tex
+├── decl.html
+├── decl.json
+└── decl.hovers.json
 ```
 -/
 
@@ -97,5 +103,35 @@ def getDeclarationDirForLatex (moduleName : Lean.Name) (label : String) : String
 def getModuleDirForLatex (moduleName : Lean.Name) : String :=
   let modulePathComponents := moduleName.components.map (·.toString)
   "../../.lake/build/dressed/" ++ "/".intercalate modulePathComponents
+
+/-- Get the nodes directory for label-indexed artifact copies.
+    Returns `.lake/build/dressed/nodes/` -/
+def getNodesDir (buildDir : System.FilePath) : System.FilePath :=
+  buildDir / "dressed" / "nodes"
+
+/-- Get the directory for a specific node by label.
+    Returns `.lake/build/dressed/nodes/{label}/` -/
+def getNodeDir (buildDir : System.FilePath) (label : String) : System.FilePath :=
+  getNodesDir buildDir / label
+
+/-- Get the path for a node's .tex file by label.
+    Returns `.lake/build/dressed/nodes/{label}/decl.tex` -/
+def getNodeTexPath (buildDir : System.FilePath) (label : String) : System.FilePath :=
+  getNodeDir buildDir label / "decl.tex"
+
+/-- Get the path for a node's .html file by label.
+    Returns `.lake/build/dressed/nodes/{label}/decl.html` -/
+def getNodeHtmlPath (buildDir : System.FilePath) (label : String) : System.FilePath :=
+  getNodeDir buildDir label / "decl.html"
+
+/-- Get the path for a node's .json file by label.
+    Returns `.lake/build/dressed/nodes/{label}/decl.json` -/
+def getNodeJsonPath (buildDir : System.FilePath) (label : String) : System.FilePath :=
+  getNodeDir buildDir label / "decl.json"
+
+/-- Get the path for a node's hover data JSON file by label.
+    Returns `.lake/build/dressed/nodes/{label}/decl.hovers.json` -/
+def getNodeHoversPath (buildDir : System.FilePath) (label : String) : System.FilePath :=
+  getNodeDir buildDir label / "decl.hovers.json"
 
 end Dress.Paths
