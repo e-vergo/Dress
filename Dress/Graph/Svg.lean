@@ -26,9 +26,9 @@ structure SvgConfig where
   /-- Node stroke width -/
   strokeWidth : Float := 1.5
   /-- Edge color -/
-  edgeColor : String := "#666666"
+  edgeColor : String := "#555555"
   /-- Edge stroke width -/
-  edgeWidth : Float := 1.5
+  edgeWidth : Float := 2.0
   /-- Font family -/
   fontFamily : String := "Arial, sans-serif"
   /-- Font size -/
