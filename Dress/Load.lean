@@ -17,8 +17,17 @@ open Lean
 /-- This is copied from `DocGen4.envOfImports`. -/
 def envOfImports (imports : Array Name) : IO Environment := do
   -- needed for modules which use syntax registered with `initialize add_parser_alias ..`
+  IO.eprintln s!"[DEBUG] envOfImports: Loading modules: {imports.toList}"
   unsafe Lean.enableInitializersExecution
-  importModules (imports.map (Import.mk · false true false)) Options.empty (leakEnv := true) (loadExts := true)
+  let env ← importModules (imports.map (Import.mk · false true false)) Options.empty (leakEnv := true) (loadExts := true)
+  IO.eprintln s!"[DEBUG] envOfImports: Loaded {env.allImportedModuleNames.size} modules"
+  let bpEntries := Architect.blueprintExt.getState env |>.toList
+  IO.eprintln s!"[DEBUG] envOfImports: Found {bpEntries.length} blueprint entries"
+  for (name, _) in bpEntries.take 5 do
+    IO.eprintln s!"[DEBUG]   - {name}"
+  if bpEntries.length > 5 then
+    IO.eprintln s!"[DEBUG]   ... and {bpEntries.length - 5} more"
+  return env
 
 /-- This is copied from `DocGen4.load`, except for separate handling of `options`. -/
 def runEnvOfImports (imports : Array Name) (options : Options) (x : CoreM α) : IO α := do
