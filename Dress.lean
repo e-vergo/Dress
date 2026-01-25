@@ -35,3 +35,10 @@ import Dress.Content
 import Dress.SubVersoExtract
 import Dress.Output
 import Dress.Load
+
+-- Graph: Dependency graph generation (SVG + JSON)
+import Dress.Graph.Types
+import Dress.Graph.Build
+import Dress.Graph.Layout
+import Dress.Graph.Svg
+import Dress.Graph.Json
