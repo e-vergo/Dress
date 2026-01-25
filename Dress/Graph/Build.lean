@@ -110,7 +110,7 @@ def fromNodes (nodes : Array Dress.NodeWithPos) : Graph :=
 
 /-- Build graph from the environment's blueprint extension -/
 def fromEnvironment (env : Lean.Environment) : Lean.CoreM Graph := do
-  let entries := Architect.blueprintExt.getEntries env
+  let entries := Architect.blueprintExt.getState env |>.toList
   let nodes ← entries.toArray.mapM fun (_, node) =>
     Dress.toDressNodeWithPos node
   return Builder.buildGraph nodes
