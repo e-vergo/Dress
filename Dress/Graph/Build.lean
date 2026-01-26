@@ -116,6 +116,13 @@ def processNode (dressNode : Dress.NodeWithPos) : BuilderM Unit := do
   -- Register this label
   registerLabel label label
 
+  -- Determine if this is a manually tagged status
+  -- Manual statuses are: notReady, ready, mathlibReady, inMathlib
+  -- Derived statuses are: stated, sorry, proven, fullyProven
+  let isManual := match node.status with
+    | .notReady | .ready | .mathlibReady | .inMathlib => true
+    | _ => false
+
   let num ← nextNumber envType
   let graphNode : Node := {
     id := label
@@ -125,6 +132,7 @@ def processNode (dressNode : Dress.NodeWithPos) : BuilderM Unit := do
     shape := getShape envType
     url := "#" ++ label
     leanDecls := #[node.name]
+    isManuallyTagged := isManual
   }
   addNode graphNode
 

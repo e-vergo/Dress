@@ -77,6 +77,9 @@ def renderNode (config : SvgConfig) (node : Layout.LayoutNode) : String :=
   let cx := node.x + node.width / 2
   let cy := node.y + node.height / 2
 
+  -- Dotted border for manually-tagged nodes (notReady, ready, mathlibReady, inMathlib)
+  let strokeDash := if node.node.isManuallyTagged then " stroke-dasharray=\"2,2\"" else ""
+
   let shapeElement := match node.node.shape with
     | .ellipse =>
       -- Ellipse for theorems, lemmas, propositions
@@ -84,14 +87,14 @@ def renderNode (config : SvgConfig) (node : Layout.LayoutNode) : String :=
       let ry := node.height / 2
       s!"  <ellipse cx=\"{cx}\" cy=\"{cy}\" rx=\"{rx}\" ry=\"{ry}\" " ++
       s!"fill=\"{fillColor}\" stroke=\"{config.strokeColor}\" " ++
-      s!"stroke-width=\"{config.strokeWidth}\"/>\n"
+      s!"stroke-width=\"{config.strokeWidth}\"{strokeDash}/>\n"
     | .box =>
       -- Rectangle for definitions, structures, classes
       s!"  <rect x=\"{node.x}\" y=\"{node.y}\" " ++
       s!"width=\"{node.width}\" height=\"{node.height}\" " ++
       s!"rx=\"{config.borderRadius}\" ry=\"{config.borderRadius}\" " ++
       s!"fill=\"{fillColor}\" stroke=\"{config.strokeColor}\" " ++
-      s!"stroke-width=\"{config.strokeWidth}\"/>\n"
+      s!"stroke-width=\"{config.strokeWidth}\"{strokeDash}/>\n"
 
   -- Wrap in <g class="node"> with <title> for click handler compatibility
   s!"<g class=\"node\">\n" ++

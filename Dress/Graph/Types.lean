@@ -45,6 +45,8 @@ structure Node where
   url : String
   /-- Associated Lean declaration names -/
   leanDecls : Array Lean.Name
+  /-- Whether this node's status was manually set via @[blueprint] attribute -/
+  isManuallyTagged : Bool := false
   deriving Repr, Inhabited
 
 /-- An edge in the dependency graph -/
