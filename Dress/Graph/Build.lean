@@ -84,11 +84,9 @@ def getStatus (node : Architect.Node) (hasLean : Bool) (hasSorry : Bool := false
   | .inMathlib => .inMathlib
   | .mathlibReady => .mathlibReady
   | .ready =>
-    -- Even if marked ready, if we have Lean code, derive the actual status
-    if hasLean then
-      if hasSorry then .sorry else .proven
-    else
-      .ready
+    -- Manual ready status is preserved - user explicitly marked this as "ready to formalize"
+    -- even if there's placeholder Lean code with sorry
+    .ready
   | .notReady => .notReady
   | .stated =>
     -- Default: derive from Lean presence
