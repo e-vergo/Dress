@@ -1097,10 +1097,8 @@ def createLayoutEdgesSimple (g : Graph) (config : LayoutConfig) : LayoutM (Array
         let perpX := -dirY
         let perpY := dirX
 
-        -- Curve amount: use horizontal direction to decide which side to curve
-        -- This helps edges going different directions curve away from each other
-        let curveSign := if dx >= 0 then 1.0 else -1.0
-        let curveAmount := curveSign * min 20.0 (dist / 5.0)
+        -- Subtle curve amount for gentle arcs
+        let curveAmount := min 8.0 (dist / 10.0)
 
         -- Control points with perpendicular offset for visible curve
         let cp1X := startX + dirX * offset + perpX * curveAmount
@@ -1232,9 +1230,8 @@ def createLayoutEdges (g : Graph) (config : LayoutConfig) : LayoutM (Array Layou
             let perpX := -dirY
             let perpY := dirX
 
-            -- Curve amount based on direction to separate overlapping edges
-            let curveSign := if dx >= 0 then 1.0 else -1.0
-            let curveAmount := curveSign * min 20.0 (dist / 5.0)
+            -- Subtle curve amount for gentle arcs
+            let curveAmount := min 8.0 (dist / 10.0)
 
             let cp1 := (startX + dirX * offset + perpX * curveAmount,
                         startY + dirY * offset + perpY * curveAmount)
