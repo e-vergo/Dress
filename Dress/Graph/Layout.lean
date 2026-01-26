@@ -127,6 +127,449 @@ def clipToNodeBoundary (node : LayoutNode) (targetX targetY : Float) : Float × 
   | .box =>
     intersectLineRect node.x node.y node.width node.height targetX targetY
 
+/-! ## Visibility Graph for Edge Routing -/
+
+/-- A point in 2D space for edge routing -/
+structure Point where
+  x : Float
+  y : Float
+  deriving Repr, Inhabited, BEq
+
+/-- An obstacle (node bounding box with margin) for visibility graph -/
+structure Obstacle where
+  x : Float  -- Top-left X
+  y : Float  -- Top-left Y
+  w : Float  -- Width
+  h : Float  -- Height
+  shape : NodeShape
+  deriving Repr, Inhabited
+
+/-- Get visibility vertices for a rectangular obstacle (4 corners expanded by margin) -/
+def rectObstacleVertices (obs : Obstacle) (margin : Float) : Array Point :=
+  let x1 := obs.x - margin
+  let y1 := obs.y - margin
+  let x2 := obs.x + obs.w + margin
+  let y2 := obs.y + obs.h + margin
+  #[⟨x1, y1⟩, ⟨x2, y1⟩, ⟨x1, y2⟩, ⟨x2, y2⟩]
+
+/-- Get visibility vertices for an elliptical obstacle (8 octant points) -/
+def ellipseObstacleVertices (obs : Obstacle) (margin : Float) : Array Point :=
+  let cx := obs.x + obs.w / 2
+  let cy := obs.y + obs.h / 2
+  let rx := obs.w / 2 + margin
+  let ry := obs.h / 2 + margin
+  let sqrt2_2 : Float := 0.7071067811865476  -- √2/2
+  #[
+    ⟨cx + rx, cy⟩,
+    ⟨cx + rx * sqrt2_2, cy - ry * sqrt2_2⟩,
+    ⟨cx, cy - ry⟩,
+    ⟨cx - rx * sqrt2_2, cy - ry * sqrt2_2⟩,
+    ⟨cx - rx, cy⟩,
+    ⟨cx - rx * sqrt2_2, cy + ry * sqrt2_2⟩,
+    ⟨cx, cy + ry⟩,
+    ⟨cx + rx * sqrt2_2, cy + ry * sqrt2_2⟩
+  ]
+
+/-- Check if line segment intersects rectangle using Liang-Barsky algorithm.
+    Returns true if segment from p1 to p2 intersects the rectangle interior. -/
+def segmentIntersectsRect (p1 p2 : Point) (obs : Obstacle) : Bool :=
+  let dx := p2.x - p1.x
+  let dy := p2.y - p1.y
+  let xmin := obs.x
+  let xmax := obs.x + obs.w
+  let ymin := obs.y
+  let ymax := obs.y + obs.h
+
+  -- Liang-Barsky algorithm: clip segment to rectangle
+  -- p values represent direction toward each boundary
+  -- q values represent signed distance from p1 to each boundary
+  let p := #[-dx, dx, -dy, dy]
+  let q := #[p1.x - xmin, xmax - p1.x, p1.y - ymin, ymax - p1.y]
+
+  -- Find valid t range [t0, t1] for the segment
+  let (t0, t1, valid) := Id.run do
+    let mut t0 : Float := 0.0
+    let mut t1 : Float := 1.0
+    for i in [0:4] do
+      let pi := p[i]!
+      let qi := q[i]!
+      if pi == 0 then
+        -- Line parallel to this boundary
+        if qi < 0 then
+          return (t0, t1, false)  -- Outside and parallel - no intersection
+      else
+        let t := qi / pi
+        if pi < 0 then
+          -- Entering: update t0 (start of valid range)
+          t0 := max t0 t
+        else
+          -- Leaving: update t1 (end of valid range)
+          t1 := min t1 t
+      if t0 > t1 then
+        return (t0, t1, false)  -- Ranges don't overlap - no intersection
+    return (t0, t1, true)
+
+  valid && t0 <= t1
+
+/-- Check if line segment intersects ellipse (parametric approach).
+    Returns true if segment from p1 to p2 intersects the ellipse interior. -/
+def segmentIntersectsEllipse (p1 p2 : Point) (obs : Obstacle) : Bool :=
+  -- Transform to unit circle centered at origin
+  let cx := obs.x + obs.w / 2
+  let cy := obs.y + obs.h / 2
+  let rx := obs.w / 2
+  let ry := obs.h / 2
+
+  -- Handle degenerate ellipse
+  if rx <= 0 || ry <= 0 then false
+  else
+    -- Normalize points relative to ellipse center and radii
+    let x1 := (p1.x - cx) / rx
+    let y1 := (p1.y - cy) / ry
+    let x2 := (p2.x - cx) / rx
+    let y2 := (p2.y - cy) / ry
+
+    -- Now check intersection with unit circle
+    -- Line: P = P1 + t*(P2-P1), t in [0,1]
+    -- Circle: x² + y² = 1
+    let dx := x2 - x1
+    let dy := y2 - y1
+
+    -- Quadratic: At² + Bt + C = 0
+    let a := dx*dx + dy*dy
+    let b := 2*(x1*dx + y1*dy)
+    let c := x1*x1 + y1*y1 - 1
+
+    -- Handle degenerate case (point, not a line segment)
+    if a < 1e-10 then c <= 0  -- Point inside circle
+    else
+      let discriminant := b*b - 4*a*c
+      if discriminant < 0 then false
+      else
+        let sqrtD := Float.sqrt discriminant
+        let t1 := (-b - sqrtD) / (2*a)
+        let t2 := (-b + sqrtD) / (2*a)
+
+        -- Check if any intersection is within segment [0, 1]
+        -- Also check if segment is entirely inside (t1 < 0 && t2 > 1)
+        (0 <= t1 && t1 <= 1) || (0 <= t2 && t2 <= 1) || (t1 < 0 && t2 > 1)
+
+/-- Check if line segment intersects any obstacle (excluding specified indices).
+    excludeIndices allows skipping the source and target node obstacles. -/
+def segmentIntersectsObstacles (p1 p2 : Point) (obstacles : Array Obstacle)
+    (excludeIndices : Array Nat) : Bool := Id.run do
+  for i in [0:obstacles.size] do
+    if !excludeIndices.contains i then
+      let obs := obstacles[i]!
+      let intersects := match obs.shape with
+        | .box => segmentIntersectsRect p1 p2 obs
+        | .ellipse => segmentIntersectsEllipse p1 p2 obs
+      if intersects then
+        return true
+  return false
+
+/-- Collect all visibility vertices from obstacles plus source and target -/
+def collectVisibilityVertices (source target : Point) (obstacles : Array Obstacle)
+    (margin : Float := 5.0) : Array Point := Id.run do
+  let mut vertices : Array Point := #[source]
+  for obs in obstacles do
+    let obsVerts := match obs.shape with
+      | .box => rectObstacleVertices obs margin
+      | .ellipse => ellipseObstacleVertices obs margin
+    vertices := vertices ++ obsVerts
+  vertices := vertices.push target
+  return vertices
+
+/-- Build visibility graph edges (pairs of vertex indices that can see each other).
+    Returns an array of (i, j) pairs where vertices[i] and vertices[j] have
+    unobstructed line of sight. -/
+def buildVisibilityGraph (vertices : Array Point) (obstacles : Array Obstacle)
+    (excludeIndices : Array Nat := #[]) : Array (Nat × Nat) := Id.run do
+  let mut edges : Array (Nat × Nat) := #[]
+  for i in [0:vertices.size] do
+    for j in [i+1:vertices.size] do
+      let p1 := vertices[i]!
+      let p2 := vertices[j]!
+      if !segmentIntersectsObstacles p1 p2 obstacles excludeIndices then
+        edges := edges.push (i, j)
+        edges := edges.push (j, i)  -- Undirected graph
+  return edges
+
+/-! ### Dijkstra's Shortest Path -/
+
+/-- Euclidean distance between two points -/
+def Point.dist (p1 p2 : Point) : Float :=
+  let dx := p2.x - p1.x
+  let dy := p2.y - p1.y
+  Float.sqrt (dx * dx + dy * dy)
+
+/-- Find shortest path using Dijkstra's algorithm.
+    Returns array of vertex indices from source to target.
+    Uses O(V²) implementation which is sufficient for small visibility graphs. -/
+def dijkstraShortestPath (vertices : Array Point) (edges : Array (Nat × Nat))
+    (sourceIdx targetIdx : Nat) : Array Nat := Id.run do
+  let n := vertices.size
+  if n == 0 || sourceIdx >= n || targetIdx >= n then return #[]
+
+  -- Handle trivial case: source == target
+  if sourceIdx == targetIdx then return #[sourceIdx]
+
+  -- Build adjacency list with distances
+  let mut adj : Array (Array (Nat × Float)) := List.replicate n #[] |>.toArray
+  for (i, j) in edges do
+    if i < n && j < n then
+      let d := Point.dist vertices[i]! vertices[j]!
+      adj := adj.modify i (·.push (j, d))
+
+  -- Distance array (infinity = very large number)
+  let infinity : Float := 1e18
+  let mut dist : Array Float := List.replicate n infinity |>.toArray
+  dist := dist.set! sourceIdx 0.0
+
+  -- Previous vertex for path reconstruction
+  let mut prev : Array (Option Nat) := List.replicate n none |>.toArray
+
+  -- Visited array
+  let mut visited : Array Bool := List.replicate n false |>.toArray
+
+  -- Track if we found the target
+  let mut foundTarget := false
+
+  -- Simple O(V²) Dijkstra (sufficient for small graphs)
+  for _ in [0:n] do
+    if foundTarget then
+      pure ()  -- Skip remaining iterations
+    else
+      -- Find unvisited vertex with minimum distance
+      let mut minDist := infinity
+      let mut u : Option Nat := none
+      for i in [0:n] do
+        if !visited[i]! && dist[i]! < minDist then
+          minDist := dist[i]!
+          u := some i
+
+      match u with
+      | none => foundTarget := true  -- No reachable unvisited vertices, stop
+      | some uIdx =>
+        if uIdx == targetIdx then
+          foundTarget := true  -- Found target, stop
+        else
+          visited := visited.set! uIdx true
+
+          -- Relax edges from u
+          for (v, weight) in adj[uIdx]! do
+            let alt := dist[uIdx]! + weight
+            if alt < dist[v]! then
+              dist := dist.set! v alt
+              prev := prev.set! v (some uIdx)
+
+  -- Reconstruct path
+  if dist[targetIdx]! >= infinity then return #[]  -- No path found
+
+  -- Build path backwards from target to source
+  let mut path : Array Nat := #[targetIdx]
+  let mut current := targetIdx
+  let mut pathLength := 0
+  let maxPathLength := n  -- Prevent infinite loops
+
+  while pathLength < maxPathLength do
+    pathLength := pathLength + 1
+    match prev[current]! with
+    | none =>
+      -- Reached a node with no predecessor
+      if current == sourceIdx then
+        -- Successfully reached source, reverse and return
+        return path.reverse
+      else
+        -- Broken path, shouldn't happen if dist[targetIdx] < infinity
+        return #[]
+    | some p =>
+      path := path.push p
+      current := p
+
+  -- If we exit the loop without returning, path reconstruction failed
+  return #[]
+
+/-- Get the actual Point coordinates from a path of indices -/
+def getPathPoints (vertices : Array Point) (path : Array Nat) : Array Point :=
+  path.filterMap fun i => vertices[i]?
+
+/-! ### Bezier Curve Fitting -/
+
+/-- Convert 4 Catmull-Rom points to cubic Bezier control points.
+    Given points P0, P1, P2, P3, the curve goes from P1 to P2.
+    Returns (P1, CP1, CP2, P2) where CP1 and CP2 are Bezier control points. -/
+def catmullRomToBezier (p0 p1 p2 p3 : Point) (tension : Float := 0.5)
+    : Point × Point × Point × Point :=
+  -- Catmull-Rom tangent at P1: (P2 - P0) / 2
+  -- Catmull-Rom tangent at P2: (P3 - P1) / 2
+  -- Bezier control point 1: P1 + tangent1 / 3
+  -- Bezier control point 2: P2 - tangent2 / 3
+  let t := tension
+  let cp1 : Point := {
+    x := p1.x + (p2.x - p0.x) * t / 3
+    y := p1.y + (p2.y - p0.y) * t / 3
+  }
+  let cp2 : Point := {
+    x := p2.x - (p3.x - p1.x) * t / 3
+    y := p2.y - (p3.y - p1.y) * t / 3
+  }
+  (p1, cp1, cp2, p2)
+
+/-- Convert a polyline (array of points) to Bezier control points for smooth curve.
+    Returns array of points suitable for SVG cubic Bezier path:
+    [start, cp1, cp2, p1, cp3, cp4, p2, ...]
+
+    For 2 points: straight line (no control points needed, just endpoints)
+    For 3+ points: Catmull-Rom interpolation with phantom endpoints -/
+def polylineToBezier (waypoints : Array Point) : Array Point := Id.run do
+  if waypoints.size < 2 then return waypoints
+  if waypoints.size == 2 then return waypoints  -- Just a straight line
+
+  let mut result : Array Point := #[]
+  let n := waypoints.size
+
+  -- Add the starting point
+  result := result.push waypoints[0]!
+
+  -- For each segment, we need 4 points for Catmull-Rom
+  -- For edge segments, we create phantom points by reflection
+  for i in [0:n-1] do
+    -- Get P0, P1, P2, P3 for Catmull-Rom
+    let p0 := if i == 0 then
+      -- Phantom point: reflect P1 about P0
+      let p0' := waypoints[0]!
+      let p1' := waypoints[1]!
+      { x := 2 * p0'.x - p1'.x, y := 2 * p0'.y - p1'.y : Point }
+    else
+      waypoints[i-1]!
+
+    let p1 := waypoints[i]!
+    let p2 := waypoints[i+1]!
+
+    let p3 := if i + 2 >= n then
+      -- Phantom point: reflect P2 about P3 (which is the last point)
+      let pLast := waypoints[n-1]!
+      let pPrev := waypoints[n-2]!
+      { x := 2 * pLast.x - pPrev.x, y := 2 * pLast.y - pPrev.y : Point }
+    else
+      waypoints[i+2]!
+
+    let (_, cp1, cp2, endPt) := catmullRomToBezier p0 p1 p2 p3
+
+    -- Add control points and endpoint for this cubic Bezier segment
+    result := result.push cp1
+    result := result.push cp2
+    result := result.push endPt
+
+  return result
+
+/-- Convert Bezier control points to SVG path data string.
+    Input: [start, cp1, cp2, end1, cp3, cp4, end2, ...]
+    Output: "M x0 y0 C cp1x cp1y cp2x cp2y x1 y1 ..." -/
+def bezierToSvgPath (points : Array Point) : String := Id.run do
+  if points.size < 2 then return ""
+
+  let mut path := s!"M {points[0]!.x} {points[0]!.y}"
+
+  if points.size == 2 then
+    -- Straight line
+    path := path ++ s!" L {points[1]!.x} {points[1]!.y}"
+    return path
+
+  -- Process cubic Bezier segments (groups of 3 after start: cp1, cp2, end)
+  let mut i := 1
+  while i + 2 < points.size do
+    let cp1 := points[i]!
+    let cp2 := points[i+1]!
+    let endPt := points[i+2]!
+    path := path ++ s!" C {cp1.x} {cp1.y} {cp2.x} {cp2.y} {endPt.x} {endPt.y}"
+    i := i + 3
+
+  return path
+
+/-- Simple corner smoothing: for each interior waypoint, create a smooth corner.
+    Returns control points for quadratic Bezier curves mixed with line segments. -/
+def smoothCorners (waypoints : Array Point) (cornerRadius : Float := 10.0)
+    : Array Point := Id.run do
+  if waypoints.size < 3 then return waypoints
+
+  let mut result : Array Point := #[waypoints[0]!]
+
+  for i in [1:waypoints.size - 1] do
+    let prev := waypoints[i-1]!
+    let curr := waypoints[i]!
+    let next := waypoints[i+1]!
+
+    -- Vector from current to prev
+    let toPrev : Point := { x := prev.x - curr.x, y := prev.y - curr.y }
+    let lenPrev := Float.sqrt (toPrev.x * toPrev.x + toPrev.y * toPrev.y)
+
+    -- Vector from current to next
+    let toNext : Point := { x := next.x - curr.x, y := next.y - curr.y }
+    let lenNext := Float.sqrt (toNext.x * toNext.x + toNext.y * toNext.y)
+
+    -- Don't smooth if segments are too short
+    let r := min cornerRadius (min (lenPrev / 2) (lenNext / 2))
+
+    if r > 0.1 && lenPrev > 0.1 && lenNext > 0.1 then
+      -- Points where the curve starts and ends
+      let startPt : Point := {
+        x := curr.x + toPrev.x / lenPrev * r
+        y := curr.y + toPrev.y / lenPrev * r
+      }
+      let endPt : Point := {
+        x := curr.x + toNext.x / lenNext * r
+        y := curr.y + toNext.y / lenNext * r
+      }
+      -- The corner point becomes the control point for quadratic Bezier
+      result := result.push startPt
+      result := result.push curr  -- control point
+      result := result.push endPt
+    else
+      result := result.push curr
+
+  result := result.push waypoints[waypoints.size - 1]!
+  return result
+
+/-- Convert Point to Float tuple -/
+def Point.toTuple (p : Point) : Float × Float := (p.x, p.y)
+
+/-- Convert Float tuple to Point -/
+def Point.fromTuple (t : Float × Float) : Point := ⟨t.1, t.2⟩
+
+/-- Convert smoothed corners output to SVG path data string.
+    Handles mixed line segments and quadratic Bezier curves.
+    Input pattern from smoothCorners: [start, ..., startPt, controlPt, endPt, ..., end]
+    where triplets (startPt, controlPt, endPt) are quadratic curves. -/
+def smoothCornersToSvgPath (points : Array Point) : String := Id.run do
+  if points.size < 2 then return ""
+
+  let mut path := s!"M {points[0]!.x} {points[0]!.y}"
+  let mut i := 1
+
+  while i < points.size do
+    -- Check if we have a quadratic curve triplet
+    -- This is detected by checking if the next two points could form a curve
+    -- For now, we treat every 3 points after start as potential curve
+    if i + 2 < points.size then
+      -- Assume this could be a quadratic Bezier (line to start, curve through control to end)
+      let p1 := points[i]!
+      let cp := points[i+1]!
+      let p2 := points[i+2]!
+
+      -- Line to curve start, then quadratic curve
+      path := path ++ s!" L {p1.x} {p1.y}"
+      path := path ++ s!" Q {cp.x} {cp.y} {p2.x} {p2.y}"
+      i := i + 3
+    else
+      -- Just a line segment to the next point
+      let p := points[i]!
+      path := path ++ s!" L {p.x} {p.y}"
+      i := i + 1
+
+  return path
+
 /-- Layout state -/
 structure LayoutState where
   /-- Node to layer assignment -/
@@ -588,12 +1031,12 @@ def assignCoordinates (g : Graph) (config : LayoutConfig) : LayoutM Unit := do
   -- Step 2: Refine positions toward neighbor medians (5 iterations)
   refinePositions g config 5
 
-/-- Create layout edges with control points using DOT-style boundary clipping.
+/-- Create layout edges with simple bezier control points (no obstacle avoidance).
     - Calculate line from center of source to center of target
     - Clip to source boundary for start point
     - Clip to target boundary for end point
     - Smooth bezier curves using offset-based control points -/
-def createLayoutEdges (g : Graph) (config : LayoutConfig) : LayoutM (Array LayoutEdge) := do
+def createLayoutEdgesSimple (g : Graph) (config : LayoutConfig) : LayoutM (Array LayoutEdge) := do
   let s ← get
   let mut layoutEdges : Array LayoutEdge := #[]
 
@@ -660,6 +1103,137 @@ def createLayoutEdges (g : Graph) (config : LayoutConfig) : LayoutM (Array Layou
 
         #[(startX, startY), (cp1X, cp1Y), (cp2X, cp2Y), (endX, endY)]
       layoutEdges := layoutEdges.push { from_ := edge.from_, to := edge.to, points, style := edge.style }
+    | _ => pure ()
+
+  return layoutEdges
+
+/-- Create layout edges with obstacle-avoiding spline routing.
+    Uses visibility graph + Dijkstra + Bezier fitting for smooth curves around nodes. -/
+def createLayoutEdges (g : Graph) (config : LayoutConfig) : LayoutM (Array LayoutEdge) := do
+  let s ← get
+  let mut layoutEdges : Array LayoutEdge := #[]
+
+  -- Build a lookup from node ID to Graph.Node (for shape info)
+  let nodeMap : Std.HashMap String Node := g.nodes.foldl
+    (fun acc node => acc.insert node.id node) {}
+
+  -- Build obstacles from all nodes (with their positions and dimensions)
+  -- Also build a map from node ID to obstacle index for exclusion
+  let mut obstacles : Array Obstacle := #[]
+  let mut nodeIdToObsIdx : Std.HashMap String Nat := {}
+
+  for node in g.nodes do
+    match s.positions.get? node.id with
+    | some (x, y) =>
+      let width := s.nodeWidths.get? node.id |>.getD config.nodeWidth
+      let obsIdx := obstacles.size
+      nodeIdToObsIdx := nodeIdToObsIdx.insert node.id obsIdx
+      obstacles := obstacles.push {
+        x := x
+        y := y
+        w := width
+        h := config.nodeHeight
+        shape := node.shape
+      }
+    | none => pure ()
+
+  -- Route each edge
+  for edge in g.edges do
+    match (s.positions.get? edge.from_, s.positions.get? edge.to,
+           nodeMap.get? edge.from_, nodeMap.get? edge.to) with
+    | (some (x1, y1), some (x2, y2), some sourceNode, some targetNode) =>
+      -- Get dynamic widths
+      let sourceWidth := s.nodeWidths.get? edge.from_ |>.getD config.nodeWidth
+      let targetWidth := s.nodeWidths.get? edge.to |>.getD config.nodeWidth
+
+      -- Build LayoutNode structures for clipping
+      let sourceLayoutNode : LayoutNode := {
+        node := sourceNode
+        x := x1
+        y := y1
+        width := sourceWidth
+        height := config.nodeHeight
+      }
+      let targetLayoutNode : LayoutNode := {
+        node := targetNode
+        x := x2
+        y := y2
+        width := targetWidth
+        height := config.nodeHeight
+      }
+
+      -- Get node centers
+      let sourceCx := x1 + sourceWidth / 2
+      let sourceCy := y1 + config.nodeHeight / 2
+      let targetCx := x2 + targetWidth / 2
+      let targetCy := y2 + config.nodeHeight / 2
+
+      let sourceCenter : Point := ⟨sourceCx, sourceCy⟩
+      let targetCenter : Point := ⟨targetCx, targetCy⟩
+
+      -- Find indices of source and target obstacles to exclude them from collision
+      let sourceObsIdx := nodeIdToObsIdx.get? edge.from_
+      let targetObsIdx := nodeIdToObsIdx.get? edge.to
+      let excludeIdxs := [sourceObsIdx, targetObsIdx].filterMap id |>.toArray
+
+      -- Build visibility graph with source/target centers and all obstacle corners
+      let vertices := collectVisibilityVertices sourceCenter targetCenter obstacles
+      let visEdges := buildVisibilityGraph vertices obstacles excludeIdxs
+
+      -- Source is index 0, target is last index (vertices.size - 1)
+      let sourceIdx : Nat := 0
+      let targetIdx : Nat := vertices.size - 1
+
+      -- Find shortest path using Dijkstra
+      let path := dijkstraShortestPath vertices visEdges sourceIdx targetIdx
+      let pathPoints := getPathPoints vertices path
+
+      -- Determine final waypoints
+      let waypoints := if pathPoints.isEmpty || pathPoints.size < 2 then
+        -- Fallback to direct line if no path found
+        #[sourceCenter, targetCenter]
+      else
+        pathPoints
+
+      -- Convert polyline to smooth Bezier curve
+      let smoothPoints := polylineToBezier waypoints
+
+      -- Get the second point (or target if only 2 points) for clipping direction
+      let secondPoint := if smoothPoints.size > 1 then smoothPoints[1]! else targetCenter
+      let secondLastPoint := if smoothPoints.size > 1 then smoothPoints[smoothPoints.size - 2]! else sourceCenter
+
+      -- Clip start and end to node boundaries
+      let (startX, startY) := clipToNodeBoundary sourceLayoutNode secondPoint.x secondPoint.y
+      let (endX, endY) := clipToNodeBoundary targetLayoutNode secondLastPoint.x secondLastPoint.y
+
+      -- Build final points array: replace first and last points with clipped versions
+      let finalPoints : Array (Float × Float) :=
+        if smoothPoints.size <= 2 then
+          -- Simple line or very short path: create bezier with control points
+          let dx := endX - startX
+          let dy := endY - startY
+          let dist := Float.sqrt (dx * dx + dy * dy)
+          if dist < 0.001 then
+            #[(startX, startY), (startX, startY), (endX, endY), (endX, endY)]
+          else
+            let offset := dist / 4.0
+            let dirX := dx / dist
+            let dirY := dy / dist
+            let cp1 := (startX + dirX * offset, startY + dirY * offset)
+            let cp2 := (endX - dirX * offset, endY - dirY * offset)
+            #[(startX, startY), cp1, cp2, (endX, endY)]
+        else
+          -- Multi-point path: replace endpoints with clipped versions
+          let pts := smoothPoints.map Point.toTuple
+          let pts := pts.set! 0 (startX, startY)
+          pts.set! (pts.size - 1) (endX, endY)
+
+      layoutEdges := layoutEdges.push {
+        from_ := edge.from_
+        to := edge.to
+        points := finalPoints
+        style := edge.style
+      }
     | _ => pure ()
 
   return layoutEdges
