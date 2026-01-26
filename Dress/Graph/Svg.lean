@@ -116,14 +116,28 @@ def renderEdge (config : SvgConfig) (edge : Layout.LayoutEdge) : String :=
     let (x0, y0) := edge.points[0]!
     let mut path := s!"M {x0} {y0}"
 
+    -- Points format from polylineToBezier: [start, cp1, cp2, end1, cp3, cp4, end2, ...]
+    -- Each cubic Bezier segment needs 3 points after start (cp1, cp2, endpoint)
+    -- So valid sizes are: 2 (line), 4 (1 cubic), 7 (2 cubics), 10 (3 cubics), etc.
+    -- Pattern: 1 + 3*n points for n cubic segments
+
     if edge.points.size >= 4 then
-      -- Cubic bezier
-      let (x1, y1) := edge.points[1]!
-      let (x2, y2) := edge.points[2]!
-      let (x3, y3) := edge.points[3]!
-      path := path ++ s!" C {x1} {y1}, {x2} {y2}, {x3} {y3}"
+      -- Process cubic Bezier segments
+      -- After the start point, consume groups of 3 points (cp1, cp2, endpoint)
+      let mut i := 1
+      while i + 2 < edge.points.size do
+        let (cp1x, cp1y) := edge.points[i]!
+        let (cp2x, cp2y) := edge.points[i + 1]!
+        let (ex, ey) := edge.points[i + 2]!
+        path := path ++ s!" C {cp1x} {cp1y}, {cp2x} {cp2y}, {ex} {ey}"
+        i := i + 3
+      -- Handle any remaining points as line segments (shouldn't happen with well-formed data)
+      while i < edge.points.size do
+        let (x, y) := edge.points[i]!
+        path := path ++ s!" L {x} {y}"
+        i := i + 1
     else
-      -- Simple line
+      -- Less than 4 points: use line segments
       for i in [1:edge.points.size] do
         let (x, y) := edge.points[i]!
         path := path ++ s!" L {x} {y}"
