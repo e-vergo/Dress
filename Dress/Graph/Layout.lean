@@ -411,16 +411,28 @@ def resolveOverlaps (layer : Array String) (positions : Std.HashMap String (Floa
 
   let sorted := nodesWithY.qsort (fun a b => a.2.2 < b.2.2)
 
-  -- Push overlapping nodes apart
-  for i in [1:sorted.size] do
-    let (_, _, prevY) := sorted[i-1]!
+  -- Push overlapping nodes apart, tracking the actual Y positions as we update
+  let mut lastY : Float := -1000.0  -- Start with a very low value
+
+  for i in [0:sorted.size] do
     let (currId, currX, currY) := sorted[i]!
 
-    let gap := currY - prevY
-    if gap < minSeparation then
-      -- Push current node down
-      let newY := prevY + minSeparation
-      result := result.insert currId (currX, newY)
+    -- Get the actual current Y (which may have been updated)
+    let actualY := match result.get? currId with
+      | some (_, y) => y
+      | none => currY
+
+    if i == 0 then
+      lastY := actualY
+    else
+      let gap := actualY - lastY
+      if gap < minSeparation then
+        -- Push current node down
+        let newY := lastY + minSeparation
+        result := result.insert currId (currX, newY)
+        lastY := newY
+      else
+        lastY := actualY
 
   return result
 
