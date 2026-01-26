@@ -26,13 +26,13 @@ structure SvgConfig where
   mathlibReadyColor : String := "#4169E1" -- Blue - ready to upstream
   inMathlibColor : String := "#191970"    -- Dark blue - already in Mathlib
   /-- Node stroke color -/
-  strokeColor : String := "#333333"
+  strokeColor : String := "#000000"
   /-- Node stroke width -/
   strokeWidth : Float := 1.5
   /-- Edge color -/
-  edgeColor : String := "#555555"
+  edgeColor : String := "#000000"
   /-- Edge stroke width -/
-  edgeWidth : Float := 2.0
+  edgeWidth : Float := 1.5
   /-- Font family -/
   fontFamily : String := "Arial, sans-serif"
   /-- Font size -/
