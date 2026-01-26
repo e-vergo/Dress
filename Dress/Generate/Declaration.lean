@@ -108,12 +108,12 @@ def writeDeclarationArtifactsFromNode (name : Name) (node : Architect.Node)
   trace[blueprint.debug] "Wrote {manifestEntryPath}"
 
   -- Print sub-operation timing breakdown
-  IO.println s!"[DRESS TIMING]   texGen: {texGenEnd - texGenStart}ms for {name}"
-  IO.println s!"[DRESS TIMING]   texWrite: {texWriteEnd - texWriteStart}ms for {name}"
-  IO.println s!"[DRESS TIMING]   htmlRender: {htmlRenderTime}ms for {name}"
-  IO.println s!"[DRESS TIMING]   htmlWrite: {htmlWriteTime}ms for {name}"
-  IO.println s!"[DRESS TIMING]   jsonWrite: {jsonWriteEnd - jsonWriteStart}ms for {name}"
-  IO.println s!"[DRESS TIMING]   manifestWrite: {manifestWriteEnd - manifestWriteStart}ms for {name}"
+  logInfo m!"[DRESS TIMING]   texGen: {texGenEnd - texGenStart}ms for {name}"
+  logInfo m!"[DRESS TIMING]   texWrite: {texWriteEnd - texWriteStart}ms for {name}"
+  logInfo m!"[DRESS TIMING]   htmlRender: {htmlRenderTime}ms for {name}"
+  logInfo m!"[DRESS TIMING]   htmlWrite: {htmlWriteTime}ms for {name}"
+  logInfo m!"[DRESS TIMING]   jsonWrite: {jsonWriteEnd - jsonWriteStart}ms for {name}"
+  logInfo m!"[DRESS TIMING]   manifestWrite: {manifestWriteEnd - manifestWriteStart}ms for {name}"
 
 end Dress.Generate
 

@@ -116,8 +116,8 @@ def captureHighlighting (declName : Name) (stx : Syntax) : CommandElabM Unit := 
     let subversoEnd ← IO.monoMsNow
 
     -- Print timing breakdown for captureHighlighting internals
-    IO.println s!"[DRESS TIMING]   msgFilter: {msgFilterEnd - msgFilterStart}ms for {declName}"
-    IO.println s!"[DRESS TIMING]   subversoHighlight: {subversoEnd - subversoStart}ms for {declName}"
+    logInfo m!"[DRESS TIMING]   msgFilter: {msgFilterEnd - msgFilterStart}ms for {declName}"
+    logInfo m!"[DRESS TIMING]   subversoHighlight: {subversoEnd - subversoStart}ms for {declName}"
 
     match hl? with
     | some hl =>

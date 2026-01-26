@@ -172,9 +172,9 @@ def elabDeclAndCaptureHighlighting (stx : Syntax) (declId : Syntax) (_mods : Opt
 
               -- Calculate and print total timing
               let totalTime := captureTime + writeTime
-              IO.println s!"[DRESS TIMING] captureHighlighting: {captureTime}ms for {resolvedName}"
-              IO.println s!"[DRESS TIMING] writeArtifacts: {writeTime}ms for {resolvedName}"
-              IO.println s!"[DRESS TIMING] TOTAL: {totalTime}ms for {resolvedName}"
+              logInfo m!"[DRESS TIMING] captureHighlighting: {captureTime}ms for {resolvedName}"
+              logInfo m!"[DRESS TIMING] writeArtifacts: {writeTime}ms for {resolvedName}"
+              logInfo m!"[DRESS TIMING] TOTAL: {totalTime}ms for {resolvedName}"
 
               trace[blueprint] "Wrote artifacts for {resolvedName} with label {node.latexLabel}"
             catch e =>
