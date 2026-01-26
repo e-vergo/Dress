@@ -6,6 +6,7 @@ import Lean
 import Dress.Graph.Types
 import Dress.Core
 import Architect.Basic
+import Architect.Output
 
 /-!
 # Dependency Graph Construction
@@ -108,7 +109,7 @@ def getShape (envType : String) : NodeShape :=
   | _ => .ellipse  -- default to ellipse for unknown types
 
 /-- Process a single blueprint node -/
-def processNode (dressNode : Dress.NodeWithPos) : BuilderM Unit := do
+def processNode (dressNode : Dress.NodeWithPos) (hasSorry : Bool) : BuilderM Unit := do
   let node := dressNode.toNode
   let label := node.latexLabel
   let envType := node.statement.latexEnv
@@ -128,7 +129,7 @@ def processNode (dressNode : Dress.NodeWithPos) : BuilderM Unit := do
     id := label
     label := s!"{envType.capitalize} {num}"
     envType := envType
-    status := getStatus node dressNode.hasLean
+    status := getStatus node dressNode.hasLean hasSorry
     shape := getShape envType
     url := "#" ++ label
     leanDecls := #[node.name]
@@ -145,9 +146,9 @@ def processNode (dressNode : Dress.NodeWithPos) : BuilderM Unit := do
     for dep in proof.usesLabels do
       addEdge dep label .solid
 
-/-- Build graph from an array of Dress nodes -/
-def buildGraph (nodes : Array Dress.NodeWithPos) : Graph :=
-  let (_, state) := (nodes.forM processNode).run {}
+/-- Build graph from an array of Dress nodes with sorry information -/
+def buildGraph (nodesWithSorry : Array (Dress.NodeWithPos × Bool)) : Graph :=
+  let (_, state) := (nodesWithSorry.forM fun (node, hasSorry) => processNode node hasSorry).run {}
   -- Filter edges to only include those where both endpoints exist
   let validIds := state.nodes.map (·.id) |>.toList |> Std.HashSet.ofList
   let validEdges := state.edges.filter fun e =>
@@ -156,15 +157,19 @@ def buildGraph (nodes : Array Dress.NodeWithPos) : Graph :=
 
 end Builder
 
-/-- Build a dependency graph from Dress blueprint nodes -/
+/-- Build a dependency graph from Dress blueprint nodes (without sorry info - assumes no sorry) -/
 def fromNodes (nodes : Array Dress.NodeWithPos) : Graph :=
-  Builder.buildGraph nodes
+  Builder.buildGraph (nodes.map fun n => (n, false))
 
 /-- Build graph from the environment's blueprint extension -/
 def fromEnvironment (env : Lean.Environment) : Lean.CoreM Graph := do
   let entries := Architect.blueprintExt.getState env |>.toList
-  let nodes ← entries.toArray.mapM fun (_, node) =>
-    Dress.toDressNodeWithPos node
-  return Builder.buildGraph nodes
+  let nodesWithSorry ← entries.toArray.mapM fun (_, node) => do
+    let dressNode ← Dress.toDressNodeWithPos node
+    -- Infer uses to detect sorry (leanOk = false means has sorry)
+    let (_, proofUses) ← node.inferUses
+    let hasSorry := !proofUses.leanOk
+    return (dressNode, hasSorry)
+  return Builder.buildGraph nodesWithSorry
 
 end Dress.Graph
