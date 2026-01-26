@@ -59,19 +59,38 @@ def renderNode (config : SvgConfig) (node : Layout.LayoutNode) : String :=
   let fillColor := getStatusColor config node.node.status
   let href := node.node.url
   let label := escapeXml node.node.label
+  let nodeId := escapeXml node.node.id
   let textY := node.y + node.height / 2 + config.fontSize / 3
+  let cx := node.x + node.width / 2
+  let cy := node.y + node.height / 2
 
-  s!"<a href=\"{href}\" target=\"_parent\">\n" ++
-  s!"  <rect x=\"{node.x}\" y=\"{node.y}\" " ++
-  s!"width=\"{node.width}\" height=\"{node.height}\" " ++
-  s!"rx=\"{config.borderRadius}\" ry=\"{config.borderRadius}\" " ++
-  s!"fill=\"{fillColor}\" stroke=\"{config.strokeColor}\" " ++
-  s!"stroke-width=\"{config.strokeWidth}\"/>\n" ++
-  s!"  <text x=\"{node.x + node.width / 2}\" y=\"{textY}\" " ++
+  let shapeElement := match node.node.shape with
+    | .ellipse =>
+      -- Ellipse for theorems, lemmas, propositions
+      let rx := node.width / 2
+      let ry := node.height / 2
+      s!"  <ellipse cx=\"{cx}\" cy=\"{cy}\" rx=\"{rx}\" ry=\"{ry}\" " ++
+      s!"fill=\"{fillColor}\" stroke=\"{config.strokeColor}\" " ++
+      s!"stroke-width=\"{config.strokeWidth}\"/>\n"
+    | .box =>
+      -- Rectangle for definitions, structures, classes
+      s!"  <rect x=\"{node.x}\" y=\"{node.y}\" " ++
+      s!"width=\"{node.width}\" height=\"{node.height}\" " ++
+      s!"rx=\"{config.borderRadius}\" ry=\"{config.borderRadius}\" " ++
+      s!"fill=\"{fillColor}\" stroke=\"{config.strokeColor}\" " ++
+      s!"stroke-width=\"{config.strokeWidth}\"/>\n"
+
+  -- Wrap in <g class="node"> with <title> for click handler compatibility
+  s!"<g class=\"node\">\n" ++
+  s!"  <title>{nodeId}</title>\n" ++
+  s!"  <a href=\"{href}\" target=\"_parent\">\n" ++
+  shapeElement ++
+  s!"    <text x=\"{cx}\" y=\"{textY}\" " ++
   s!"text-anchor=\"middle\" font-family=\"{config.fontFamily}\" " ++
   s!"font-size=\"{config.fontSize}\" fill=\"{config.textColor}\">" ++
   s!"{label}</text>\n" ++
-  "</a>\n"
+  s!"  </a>\n" ++
+  s!"</g>\n"
 
 /-- Generate SVG path for a bezier edge -/
 def renderEdge (config : SvgConfig) (edge : Layout.LayoutEdge) : String :=
@@ -92,8 +111,13 @@ def renderEdge (config : SvgConfig) (edge : Layout.LayoutEdge) : String :=
         let (x, y) := edge.points[i]!
         path := path ++ s!" L {x} {y}"
 
+    -- Add stroke-dasharray for dashed edges (statement dependencies)
+    let dashAttr := match edge.style with
+      | .dashed => " stroke-dasharray=\"5,3\""
+      | .solid => ""
+
     return s!"<path d=\"{path}\" fill=\"none\" stroke=\"{config.edgeColor}\" " ++
-      s!"stroke-width=\"{config.edgeWidth}\" marker-end=\"url(#arrowhead)\"/>\n"
+      s!"stroke-width=\"{config.edgeWidth}\"{dashAttr} marker-end=\"url(#arrowhead)\"/>\n"
 
 /-- Generate SVG defs (arrowhead marker) -/
 def renderDefs (config : SvgConfig) : String :=

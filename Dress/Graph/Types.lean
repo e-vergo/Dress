@@ -21,6 +21,18 @@ inductive NodeStatus where
   | mathLibOk    -- Proved by Mathlib reference
   deriving Repr, Inhabited, BEq
 
+/-- Node shape for visualization -/
+inductive NodeShape where
+  | box      -- definitions, abbrevs, structures, classes
+  | ellipse  -- theorems, lemmas, propositions
+  deriving Repr, Inhabited, BEq
+
+/-- Edge style for visualization -/
+inductive EdgeStyle where
+  | solid   -- proof dependencies (direct usage in proof)
+  | dashed  -- statement dependencies (uses clause)
+  deriving Repr, Inhabited, BEq
+
 /-- A node in the dependency graph -/
 structure Node where
   /-- Unique identifier (label) -/
@@ -31,6 +43,8 @@ structure Node where
   envType : String
   /-- Current status -/
   status : NodeStatus
+  /-- Node shape for rendering -/
+  shape : NodeShape := .ellipse
   /-- URL to the node's section in the HTML -/
   url : String
   /-- Associated Lean declaration names -/
@@ -43,7 +57,9 @@ structure Edge where
   from_ : String
   /-- Target node id -/
   to : String
-  deriving Repr, Inhabited, BEq, Hashable
+  /-- Edge style (solid for proof deps, dashed for statement deps) -/
+  style : EdgeStyle := .solid
+  deriving Repr, Inhabited, BEq
 
 /-- The complete dependency graph -/
 structure Graph where

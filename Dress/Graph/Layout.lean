@@ -40,6 +40,8 @@ structure LayoutEdge where
   to : String
   /-- Control points for bezier curve (x, y pairs) -/
   points : Array (Float × Float)
+  /-- Edge style (solid or dashed) -/
+  style : EdgeStyle := .solid
   deriving Repr, Inhabited
 
 /-- The complete laid-out graph -/
@@ -54,19 +56,28 @@ structure LayoutGraph where
   height : Float
   deriving Repr, Inhabited
 
-/-- Layout configuration -/
+/-- Layout configuration for left-to-right flow -/
 structure LayoutConfig where
-  /-- Width of a node box -/
+  /-- Minimum width of a node box -/
   nodeWidth : Float := 100.0
   /-- Height of a node box -/
   nodeHeight : Float := 40.0
-  /-- Horizontal gap between nodes -/
-  horizontalGap : Float := 50.0
-  /-- Vertical gap between layers -/
-  verticalGap : Float := 80.0
+  /-- Horizontal gap between layers (x-axis distance) -/
+  layerGap : Float := 150.0
+  /-- Vertical gap between nodes in the same layer (y-axis distance) -/
+  nodeGap : Float := 60.0
   /-- Padding around the graph -/
   padding : Float := 20.0
+  /-- Pixels per character for dynamic node width -/
+  charWidth : Float := 8.0
+  /-- Number of barycenter iterations for crossing reduction -/
+  barycenterIterations : Nat := 4
   deriving Repr, Inhabited
+
+/-- Compute node width based on label length -/
+def computeNodeWidth (config : LayoutConfig) (label : String) : Float :=
+  let labelWidth := label.length.toFloat * config.charWidth
+  if labelWidth > config.nodeWidth then labelWidth else config.nodeWidth
 
 /-- Layout state -/
 structure LayoutState where
@@ -76,6 +87,8 @@ structure LayoutState where
   layerNodes : Array (Array String) := #[]
   /-- Node positions -/
   positions : Std.HashMap String (Float × Float) := {}
+  /-- Dynamic node widths based on labels -/
+  nodeWidths : Std.HashMap String Float := {}
   deriving Inhabited
 
 /-- Layout monad -/
@@ -128,50 +141,106 @@ def assignLayers (g : Graph) : LayoutM Unit := do
 
   set { s with layerNodes }
 
-/-- Order nodes within layers using barycenter heuristic -/
-def orderLayers (g : Graph) : LayoutM Unit := do
+/-- Order a single layer by barycenter of neighbors in the reference layer
+    forward=true means reference is previous layer (i-1), false means next layer (i+1) -/
+def orderLayerByNeighbors (g : Graph) (layerNodes : Array (Array String))
+    (layerIdx : Nat) (refLayerIdx : Nat) (forward : Bool) : Array String :=
+  let layer := layerNodes[layerIdx]!
+  let refLayer := layerNodes[refLayerIdx]!
+
+  -- Calculate barycenter for each node based on neighbor positions
+  let barycenters := layer.map fun nodeId =>
+    let neighborEdges := if forward then
+      -- Forward pass: look at incoming edges (neighbors in previous layer)
+      g.edges.filter (·.to == nodeId)
+    else
+      -- Backward pass: look at outgoing edges (neighbors in next layer)
+      g.edges.filter (·.from_ == nodeId)
+
+    let refPositions := neighborEdges.filterMap fun e =>
+      let neighborId := if forward then e.from_ else e.to
+      refLayer.findIdx? (· == neighborId) |>.map (·.toFloat)
+
+    let avg := if refPositions.isEmpty then
+      -- Keep original position if no neighbors in reference layer
+      layer.findIdx? (· == nodeId) |>.map (·.toFloat) |>.getD 0.0
+    else
+      refPositions.foldl (· + ·) 0.0 / refPositions.size.toFloat
+    (nodeId, avg)
+
+  -- Sort by barycenter
+  barycenters.qsort (·.2 < ·.2) |>.map (·.1)
+
+/-- Order nodes within layers using barycenter heuristic with multiple passes -/
+def orderLayers (g : Graph) (iterations : Nat) : LayoutM Unit := do
   let s ← get
+  let mut layerNodes := s.layerNodes
 
-  -- Simple barycenter: order by average position of neighbors in previous layer
-  let mut newLayerNodes := s.layerNodes
+  -- Run multiple iterations alternating forward and backward passes
+  for _iter in [0:iterations] do
+    -- Forward pass: order each layer based on previous layer
+    for i in [1:layerNodes.size] do
+      let sorted := orderLayerByNeighbors g layerNodes i (i-1) true
+      layerNodes := layerNodes.set! i sorted
 
-  for i in [1:s.layerNodes.size] do
-    let layer := s.layerNodes[i]!
-    let prevLayer := s.layerNodes[i-1]!
+    -- Backward pass: order each layer based on next layer
+    if layerNodes.size > 1 then
+      for i in List.range (layerNodes.size - 1) |>.reverse do
+        let sorted := orderLayerByNeighbors g layerNodes i (i+1) false
+        layerNodes := layerNodes.set! i sorted
 
-    -- Calculate barycenter for each node
-    let barycenters := layer.map fun nodeId =>
-      let inEdges := g.edges.filter (·.to == nodeId)
-      let prevPositions := inEdges.filterMap fun e =>
-        prevLayer.findIdx? (· == e.from_) |>.map (·.toFloat)
-      let avg := if prevPositions.isEmpty then 0.0
-        else prevPositions.foldl (· + ·) 0.0 / prevPositions.size.toFloat
-      (nodeId, avg)
+  set { s with layerNodes }
 
-    -- Sort by barycenter
-    let sorted := barycenters.qsort (·.2 < ·.2) |>.map (·.1)
-    newLayerNodes := newLayerNodes.set! i sorted
-
-  set { s with layerNodes := newLayerNodes }
-
-/-- Assign coordinates to nodes -/
-def assignCoordinates (config : LayoutConfig) : LayoutM Unit := do
+/-- Assign coordinates to nodes (left-to-right flow)
+    - Layer index determines x position (sources on left, sinks on right)
+    - Node index within layer determines y position
+    - Layers are centered vertically based on the tallest layer -/
+def assignCoordinates (g : Graph) (config : LayoutConfig) : LayoutM Unit := do
   let s ← get
   let mut positions : Std.HashMap String (Float × Float) := {}
+  let mut nodeWidths : Std.HashMap String Float := {}
+
+  -- First, compute dynamic widths for all nodes
+  for node in g.nodes do
+    let width := computeNodeWidth config node.label
+    nodeWidths := nodeWidths.insert node.id width
+
+  -- Find the maximum layer height (for vertical centering)
+  let maxNodesInLayer := s.layerNodes.foldl (fun acc layer => max acc layer.size) 0
+  let totalMaxHeight := maxNodesInLayer.toFloat * (config.nodeHeight + config.nodeGap) - config.nodeGap
+
+  -- Track cumulative x position (since widths vary)
+  let mut currentX := config.padding
+
+  -- Find max width per layer for proper spacing
+  let layerMaxWidths := s.layerNodes.map fun layer =>
+    layer.foldl (fun acc nodeId =>
+      let w := nodeWidths.get? nodeId |>.getD config.nodeWidth
+      max acc w) config.nodeWidth
 
   for layerIdx in [0:s.layerNodes.size] do
     let layer := s.layerNodes[layerIdx]!
-    let y := config.padding + layerIdx.toFloat * (config.nodeHeight + config.verticalGap)
-    let startX := config.padding
+    let layerWidth := layerMaxWidths[layerIdx]!
+
+    -- Calculate vertical centering offset for this layer
+    let layerHeight := layer.size.toFloat * (config.nodeHeight + config.nodeGap) - config.nodeGap
+    let verticalOffset := (totalMaxHeight - layerHeight) / 2.0
 
     for nodeIdx in [0:layer.size] do
       let nodeId := layer[nodeIdx]!
-      let x := startX + nodeIdx.toFloat * (config.nodeWidth + config.horizontalGap)
-      positions := positions.insert nodeId (x, y)
+      -- Center smaller layers vertically
+      let y := config.padding + verticalOffset + nodeIdx.toFloat * (config.nodeHeight + config.nodeGap)
+      positions := positions.insert nodeId (currentX, y)
 
-  set { s with positions }
+    -- Move x position for next layer
+    currentX := currentX + layerWidth + config.layerGap
 
-/-- Create layout edges with control points -/
+  set { s with positions, nodeWidths }
+
+/-- Create layout edges with control points (left-to-right flow)
+    - Edges start from right edge of source node
+    - Edges end at left edge of target node
+    - Smooth bezier curves using offset-based control points -/
 def createLayoutEdges (g : Graph) (config : LayoutConfig) : LayoutM (Array LayoutEdge) := do
   let s ← get
   let mut layoutEdges : Array LayoutEdge := #[]
@@ -179,20 +248,25 @@ def createLayoutEdges (g : Graph) (config : LayoutConfig) : LayoutM (Array Layou
   for edge in g.edges do
     match (s.positions.get? edge.from_, s.positions.get? edge.to) with
     | (some (x1, y1), some (x2, y2)) =>
-      -- Calculate control points for smooth bezier curve
-      let startX := x1 + config.nodeWidth / 2
-      let startY := y1 + config.nodeHeight
-      let endX := x2 + config.nodeWidth / 2
-      let endY := y2
+      -- Get dynamic width for source node
+      let sourceWidth := s.nodeWidths.get? edge.from_ |>.getD config.nodeWidth
+      -- Start at right edge of source, vertically centered
+      let startX := x1 + sourceWidth
+      let startY := y1 + config.nodeHeight / 2
+      -- End at left edge of target, vertically centered
+      let endX := x2
+      let endY := y2 + config.nodeHeight / 2
 
-      let midY := (startY + endY) / 2
+      -- Smooth bezier: offset-based control points for gradual curves
+      -- Using 1/3 offset creates smooth S-curves that don't overlap nodes
+      let offset := (endX - startX) / 3.0
       let points := #[
         (startX, startY),
-        (startX, midY),
-        (endX, midY),
+        (startX + offset, startY),
+        (endX - offset, endY),
         (endX, endY)
       ]
-      layoutEdges := layoutEdges.push { from_ := edge.from_, to := edge.to, points }
+      layoutEdges := layoutEdges.push { from_ := edge.from_, to := edge.to, points, style := edge.style }
     | _ => pure ()
 
   return layoutEdges
@@ -203,19 +277,20 @@ end Algorithm
 def layout (g : Graph) (config : LayoutConfig := {}) : LayoutGraph := Id.run do
   let (_, state) := (do
     Algorithm.assignLayers g
-    Algorithm.orderLayers g
-    Algorithm.assignCoordinates config
+    Algorithm.orderLayers g config.barycenterIterations
+    Algorithm.assignCoordinates g config
   ).run {}
 
-  -- Create layout nodes
+  -- Create layout nodes with dynamic widths
   let mut layoutNodes : Array LayoutNode := #[]
   for node in g.nodes do
     match state.positions.get? node.id with
     | some (x, y) =>
+      let width := state.nodeWidths.get? node.id |>.getD (computeNodeWidth config node.label)
       layoutNodes := layoutNodes.push {
         node
         x, y
-        width := config.nodeWidth
+        width
         height := config.nodeHeight
       }
     | none => pure ()

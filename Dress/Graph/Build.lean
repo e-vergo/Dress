@@ -44,14 +44,14 @@ def addNode (node : Node) : BuilderM Unit := do
   modify fun s => { s with nodes := s.nodes.push node }
 
 /-- Add an edge to the graph (if both endpoints exist) -/
-def addEdge (from_ to : String) : BuilderM Unit := do
+def addEdge (from_ to : String) (style : EdgeStyle := .solid) : BuilderM Unit := do
   let s ← get
   -- Only add edge if both endpoints will exist
   if s.labelToId.contains from_ || s.labelToId.contains to then
-    modify fun s => { s with edges := s.edges.push { from_, to } }
+    modify fun s => { s with edges := s.edges.push { from_, to, style } }
   else
     -- Try to add anyway - edge filtering happens later
-    modify fun s => { s with edges := s.edges.push { from_, to } }
+    modify fun s => { s with edges := s.edges.push { from_, to, style } }
 
 /-- Register a label -> node ID mapping -/
 def registerLabel (label nodeId : String) : BuilderM Unit := do
@@ -63,6 +63,13 @@ def getStatus (node : Architect.Node) (hasLean : Bool) : NodeStatus :=
   else if node.proof.isSome && hasLean then .proved
   else if hasLean then .stated
   else .stated
+
+/-- Determine node shape from environment type -/
+def getShape (envType : String) : NodeShape :=
+  match envType.toLower with
+  | "def" | "definition" | "abbrev" | "structure" | "class" | "instance" => .box
+  | "theorem" | "lemma" | "proposition" | "corollary" | "example" => .ellipse
+  | _ => .ellipse  -- default to ellipse for unknown types
 
 /-- Process a single blueprint node -/
 def processNode (dressNode : Dress.NodeWithPos) : BuilderM Unit := do
@@ -79,19 +86,20 @@ def processNode (dressNode : Dress.NodeWithPos) : BuilderM Unit := do
     label := s!"{envType.capitalize} {num}"
     envType := envType
     status := getStatus node dressNode.hasLean
+    shape := getShape envType
     url := "#" ++ label
     leanDecls := #[node.name]
   }
   addNode graphNode
 
-  -- Add edges from statement uses (label-based dependencies)
+  -- Add edges from statement uses (label-based dependencies) - dashed style
   for dep in node.statement.usesLabels do
-    addEdge dep label
+    addEdge dep label .dashed
 
-  -- Add edges from proof uses
+  -- Add edges from proof uses - solid style
   if let some proof := node.proof then
     for dep in proof.usesLabels do
-      addEdge dep label
+      addEdge dep label .solid
 
 /-- Build graph from an array of Dress nodes -/
 def buildGraph (nodes : Array Dress.NodeWithPos) : Graph :=
