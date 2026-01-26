@@ -123,9 +123,13 @@ def processNode (dressNode : Dress.NodeWithPos) (hasSorry : Bool) : BuilderM Uni
     | _ => false
 
   let num ← nextNumber envType
+  -- Priority: displayName > full qualified Lean name
+  let displayLabel := match node.displayName with
+    | some name => name
+    | none => node.name.toString  -- Full qualified name like "SBSTest.Chapter2.square_nonneg"
   let graphNode : Node := {
     id := label
-    label := s!"{envType.capitalize} {num}"
+    label := displayLabel
     envType := envType
     status := getStatus node dressNode.hasLean hasSorry
     shape := getShape envType
