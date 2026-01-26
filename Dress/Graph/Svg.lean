@@ -17,10 +17,10 @@ structure SvgConfig where
   /-- Background color -/
   backgroundColor : String := "#ffffff"
   /-- Node fill colors by status -/
-  statedColor : String := "#f0f0f0"
-  provedColor : String := "#90EE90"
-  notReadyColor : String := "#FFB6C1"
-  mathLibOkColor : String := "#87CEEB"
+  statedColor : String := "#FFD700"       -- Yellow (was #f0f0f0)
+  provedColor : String := "#90EE90"       -- Light green (unchanged)
+  notReadyColor : String := "#F4A460"     -- Orange (was #FFB6C1)
+  mathLibOkColor : String := "#191970"    -- Dark blue (was #87CEEB)
   /-- Node stroke color -/
   strokeColor : String := "#333333"
   /-- Node stroke width -/
