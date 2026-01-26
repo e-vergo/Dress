@@ -79,6 +79,54 @@ def computeNodeWidth (config : LayoutConfig) (label : String) : Float :=
   let labelWidth := label.length.toFloat * config.charWidth
   if labelWidth > config.nodeWidth then labelWidth else config.nodeWidth
 
+/-! ## Edge Routing: Boundary Intersection Helpers -/
+
+/-- Line-ellipse intersection. Returns point on ellipse boundary.
+    Given ellipse center (cx, cy), radii (rx, ry), and target point (px, py),
+    finds where the line from center to target intersects the ellipse. -/
+def intersectLineEllipse (cx cy rx ry : Float) (px py : Float) : Float × Float :=
+  -- Direction from center to point
+  let dx := px - cx
+  let dy := py - cy
+  -- Parametric: find t where (cx + t*dx, cy + t*dy) is on ellipse
+  -- (t*dx/rx)² + (t*dy/ry)² = 1
+  -- t² * (dx²/rx² + dy²/ry²) = 1
+  let denom := (dx * dx) / (rx * rx) + (dy * dy) / (ry * ry)
+  if denom <= 0 then (cx, cy) else
+    let t := 1.0 / Float.sqrt denom
+    (cx + t * dx, cy + t * dy)
+
+/-- Line-rectangle intersection. Returns point on rectangle boundary.
+    Given rect at (x, y) with dimensions (w, h), and target point (px, py),
+    finds where the line from center to target intersects the rectangle. -/
+def intersectLineRect (x y w h : Float) (px py : Float) : Float × Float :=
+  let cx := x + w / 2
+  let cy := y + h / 2
+  let dx := px - cx
+  let dy := py - cy
+  if dx == 0 && dy == 0 then (cx, cy) else
+    -- Find intersection with each edge, take the closest (smallest positive t)
+    let tRight := if dx > 0 then (w / 2) / dx else 1e10
+    let tLeft := if dx < 0 then (-w / 2) / dx else 1e10
+    let tBottom := if dy > 0 then (h / 2) / dy else 1e10
+    let tTop := if dy < 0 then (-h / 2) / dy else 1e10
+    let t := min (min tRight tLeft) (min tBottom tTop)
+    (cx + t * dx, cy + t * dy)
+
+/-- Clip edge endpoint to node boundary based on shape.
+    Given a LayoutNode and a target point, returns the point on the node's
+    boundary along the line from node center to target. -/
+def clipToNodeBoundary (node : LayoutNode) (targetX targetY : Float) : Float × Float :=
+  let cx := node.x + node.width / 2
+  let cy := node.y + node.height / 2
+  match node.node.shape with
+  | .ellipse =>
+    let rx := node.width / 2
+    let ry := node.height / 2
+    intersectLineEllipse cx cy rx ry targetX targetY
+  | .box =>
+    intersectLineRect node.x node.y node.width node.height targetX targetY
+
 /-- Layout state -/
 structure LayoutState where
   /-- Node to layer assignment -/
@@ -540,69 +588,62 @@ def assignCoordinates (g : Graph) (config : LayoutConfig) : LayoutM Unit := do
   -- Step 2: Refine positions toward neighbor medians (5 iterations)
   refinePositions g config 5
 
-/-- Create layout edges with control points (top-to-bottom flow)
-    - Edges start from bottom edge of source node
-    - Edges end at top edge of target node
-    - Smooth bezier curves using offset-based control points
-    - Multiple edges to/from a node are distributed along the node boundary -/
+/-- Create layout edges with control points using DOT-style boundary clipping.
+    - Calculate line from center of source to center of target
+    - Clip to source boundary for start point
+    - Clip to target boundary for end point
+    - Smooth bezier curves using offset-based control points -/
 def createLayoutEdges (g : Graph) (config : LayoutConfig) : LayoutM (Array LayoutEdge) := do
   let s ← get
   let mut layoutEdges : Array LayoutEdge := #[]
 
-  -- Step 1: Count outgoing and incoming edges per node
-  let mut outgoingCounts : Std.HashMap String Nat := {}
-  let mut incomingCounts : Std.HashMap String Nat := {}
+  -- Build a lookup from node ID to Graph.Node (for shape info)
+  let nodeMap : Std.HashMap String Node := g.nodes.foldl
+    (fun acc node => acc.insert node.id node) {}
 
   for edge in g.edges do
-    outgoingCounts := outgoingCounts.insert edge.from_
-      ((outgoingCounts.get? edge.from_).getD 0 + 1)
-    incomingCounts := incomingCounts.insert edge.to
-      ((incomingCounts.get? edge.to).getD 0 + 1)
-
-  -- Step 2: Track edge index per node as we process edges
-  let mut outgoingIndex : Std.HashMap String Nat := {}
-  let mut incomingIndex : Std.HashMap String Nat := {}
-
-  for edge in g.edges do
-    match (s.positions.get? edge.from_, s.positions.get? edge.to) with
-    | (some (x1, y1), some (x2, y2)) =>
-      -- Get dynamic width for source and target nodes
+    match (s.positions.get? edge.from_, s.positions.get? edge.to,
+           nodeMap.get? edge.from_, nodeMap.get? edge.to) with
+    | (some (x1, y1), some (x2, y2), some sourceNode, some targetNode) =>
+      -- Get dynamic widths
       let sourceWidth := s.nodeWidths.get? edge.from_ |>.getD config.nodeWidth
       let targetWidth := s.nodeWidths.get? edge.to |>.getD config.nodeWidth
 
-      -- Get counts and current indices
-      let outCount := outgoingCounts.get? edge.from_ |>.getD 1
-      let inCount := incomingCounts.get? edge.to |>.getD 1
-      let outIdx := outgoingIndex.get? edge.from_ |>.getD 0
-      let inIdx := incomingIndex.get? edge.to |>.getD 0
+      -- Build LayoutNode structures for clipping
+      let sourceLayoutNode : LayoutNode := {
+        node := sourceNode
+        x := x1
+        y := y1
+        width := sourceWidth
+        height := config.nodeHeight
+      }
+      let targetLayoutNode : LayoutNode := {
+        node := targetNode
+        x := x2
+        y := y2
+        width := targetWidth
+        height := config.nodeHeight
+      }
 
-      -- Calculate spread for source (bottom edge) - use 80% of node width
-      let spreadWidth := sourceWidth * 0.8
-      let outSpacing := if outCount > 1 then spreadWidth / (outCount.toFloat - 1) else 0.0
-      let outOffsetX := if outCount > 1 then -spreadWidth/2 + outSpacing * outIdx.toFloat else 0.0
+      -- Get node centers
+      let sourceCx := x1 + sourceWidth / 2
+      let sourceCy := y1 + config.nodeHeight / 2
+      let targetCx := x2 + targetWidth / 2
+      let targetCy := y2 + config.nodeHeight / 2
 
-      -- Calculate spread for target (top edge) - use 80% of node width
-      let inSpacing := if inCount > 1 then (targetWidth * 0.8) / (inCount.toFloat - 1) else 0.0
-      let inOffsetX := if inCount > 1 then -(targetWidth * 0.8)/2 + inSpacing * inIdx.toFloat else 0.0
-
-      -- Start at bottom edge of source, with distributed X offset
-      let startX := x1 + sourceWidth / 2 + outOffsetX
-      let startY := y1 + config.nodeHeight
-      -- End at top edge of target, with distributed X offset
-      let endX := x2 + targetWidth / 2 + inOffsetX
-      let endY := y2
-
-      -- Increment indices for next edge from/to these nodes
-      outgoingIndex := outgoingIndex.insert edge.from_ (outIdx + 1)
-      incomingIndex := incomingIndex.insert edge.to (inIdx + 1)
+      -- Clip to boundaries using center-to-center line
+      let (startX, startY) := clipToNodeBoundary sourceLayoutNode targetCx targetCy
+      let (endX, endY) := clipToNodeBoundary targetLayoutNode sourceCx sourceCy
 
       -- Smooth bezier: offset-based control points for gradual curves
-      -- Using 1/3 offset creates smooth S-curves that don't overlap nodes
-      let offset := (endY - startY) / 3.0
+      let dy := endY - startY
+      let offset := dy.abs / 3.0
+      let cp1Y := startY + (if dy > 0 then offset else -offset)
+      let cp2Y := endY - (if dy > 0 then offset else -offset)
       let points := #[
         (startX, startY),
-        (startX, startY + offset),
-        (endX, endY - offset),
+        (startX, cp1Y),
+        (endX, cp2Y),
         (endX, endY)
       ]
       layoutEdges := layoutEdges.push { from_ := edge.from_, to := edge.to, points, style := edge.style }
