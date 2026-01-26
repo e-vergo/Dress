@@ -54,6 +54,11 @@ def getStatusColor (config : SvgConfig) : NodeStatus → String
   | .mathlibReady => config.mathlibReadyColor
   | .inMathlib => config.inMathlibColor
 
+/-- Get text color based on node status - white for dark backgrounds -/
+def getTextColor (config : SvgConfig) : NodeStatus → String
+  | .sorry | .fullyProven | .mathlibReady | .inMathlib => "#ffffff"
+  | _ => config.textColor
+
 /-- Escape text for SVG -/
 def escapeXml (s : String) : String :=
   s.replace "&" "&amp;"
@@ -93,9 +98,10 @@ def renderNode (config : SvgConfig) (node : Layout.LayoutNode) : String :=
   s!"  <title>{nodeId}</title>\n" ++
   s!"  <a href=\"{href}\" target=\"_parent\">\n" ++
   shapeElement ++
+  let textColor := getTextColor config node.node.status
   s!"    <text x=\"{cx}\" y=\"{textY}\" " ++
   s!"text-anchor=\"middle\" font-family=\"{config.fontFamily}\" " ++
-  s!"font-size=\"{config.fontSize}\" fill=\"{config.textColor}\">" ++
+  s!"font-size=\"{config.fontSize}\" fill=\"{textColor}\">" ++
   s!"{label}</text>\n" ++
   s!"  </a>\n" ++
   s!"</g>\n"
