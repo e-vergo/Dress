@@ -45,16 +45,7 @@ namespace Dress.Graph
 
 open Lean
 
-/-- Convert NodeStatus to a string for JSON -/
-def NodeStatus.toJsonString : NodeStatus → String
-  | .stated => "stated"
-  | .proved => "proved"
-  | .notReady => "notReady"
-  | .mathLibOk => "mathLibOk"
-
-/-- JSON instance for NodeStatus -/
-instance : ToJson NodeStatus where
-  toJson s := Json.str s.toJsonString
+-- NodeStatus is re-exported from Architect.NodeStatus which already has ToJson instance
 
 /-- JSON instance for Node -/
 instance : ToJson Node where
