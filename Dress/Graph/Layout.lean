@@ -1093,13 +1093,21 @@ def createLayoutEdgesSimple (g : Graph) (config : LayoutConfig) : LayoutM (Array
         let dirY := dy / dist
         let offset := dist / 4.0
 
-        -- Control point 1: offset from start point toward target
-        let cp1X := startX + dirX * offset
-        let cp1Y := startY + dirY * offset
+        -- Perpendicular vector for curve bulge (rotated 90 degrees)
+        let perpX := -dirY
+        let perpY := dirX
 
-        -- Control point 2: offset from end point back toward source
-        let cp2X := endX - dirX * offset
-        let cp2Y := endY - dirY * offset
+        -- Curve amount: use horizontal direction to decide which side to curve
+        -- This helps edges going different directions curve away from each other
+        let curveSign := if dx >= 0 then 1.0 else -1.0
+        let curveAmount := curveSign * min 20.0 (dist / 5.0)
+
+        -- Control points with perpendicular offset for visible curve
+        let cp1X := startX + dirX * offset + perpX * curveAmount
+        let cp1Y := startY + dirY * offset + perpY * curveAmount
+
+        let cp2X := endX - dirX * offset + perpX * curveAmount
+        let cp2Y := endY - dirY * offset + perpY * curveAmount
 
         #[(startX, startY), (cp1X, cp1Y), (cp2X, cp2Y), (endX, endY)]
       layoutEdges := layoutEdges.push { from_ := edge.from_, to := edge.to, points, style := edge.style }
@@ -1219,8 +1227,19 @@ def createLayoutEdges (g : Graph) (config : LayoutConfig) : LayoutM (Array Layou
             let offset := dist / 4.0
             let dirX := dx / dist
             let dirY := dy / dist
-            let cp1 := (startX + dirX * offset, startY + dirY * offset)
-            let cp2 := (endX - dirX * offset, endY - dirY * offset)
+
+            -- Perpendicular vector for curve bulge
+            let perpX := -dirY
+            let perpY := dirX
+
+            -- Curve amount based on direction to separate overlapping edges
+            let curveSign := if dx >= 0 then 1.0 else -1.0
+            let curveAmount := curveSign * min 20.0 (dist / 5.0)
+
+            let cp1 := (startX + dirX * offset + perpX * curveAmount,
+                        startY + dirY * offset + perpY * curveAmount)
+            let cp2 := (endX - dirX * offset + perpX * curveAmount,
+                        endY - dirY * offset + perpY * curveAmount)
             #[(startX, startY), cp1, cp2, (endX, endY)]
         else
           -- Multi-point path: replace endpoints with clipped versions
