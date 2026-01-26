@@ -240,8 +240,8 @@ def render (layout : Layout.LayoutGraph) (config : SvgConfig := {}) : String := 
     svg := svg ++ renderNode config node
   svg := svg ++ "</g>\n"
 
-  -- Legend at top-left (rendered last so it's on top)
-  svg := svg ++ renderLegend config 20.0 20.0
+  -- Legend is now rendered as static HTML outside the SVG viewport
+  -- svg := svg ++ renderLegend config 20.0 20.0
 
   svg := svg ++ "</svg>"
   return svg
