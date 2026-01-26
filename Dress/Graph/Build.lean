@@ -122,7 +122,6 @@ def processNode (dressNode : Dress.NodeWithPos) (hasSorry : Bool) : BuilderM Uni
     | .notReady | .ready | .mathlibReady | .inMathlib => true
     | _ => false
 
-  let num ← nextNumber envType
   -- Priority: displayName > full qualified Lean name
   let displayLabel := match node.displayName with
     | some name => name
@@ -148,6 +147,47 @@ def processNode (dressNode : Dress.NodeWithPos) (hasSorry : Bool) : BuilderM Uni
     for dep in proof.usesLabels do
       addEdge dep label .solid
 
+/-- Find connected components using BFS -/
+def findComponents (g : Graph) : Array (Array String) := Id.run do
+  let mut visited : Std.HashSet String := {}
+  let mut components : Array (Array String) := #[]
+
+  for node in g.nodes do
+    if !visited.contains node.id then
+      -- BFS from this node
+      let mut component : Array String := #[]
+      let mut queue : Array String := #[node.id]
+      let mut queueIdx := 0
+      while h : queueIdx < queue.size do
+        let curr := queue[queueIdx]
+        queueIdx := queueIdx + 1
+        if !visited.contains curr then
+          visited := visited.insert curr
+          component := component.push curr
+          -- Add neighbors (both directions since graph is directed but we want connectivity)
+          for edge in g.edges do
+            if edge.from_ == curr && !visited.contains edge.to then
+              queue := queue.push edge.to
+            if edge.to == curr && !visited.contains edge.from_ then
+              queue := queue.push edge.from_
+      components := components.push component
+  return components
+
+/-- Ensure graph is connected by adding dashed edges between components -/
+def ensureConnected (g : Graph) : Graph :=
+  let components := findComponents g
+  if components.size <= 1 then g
+  else Id.run do
+    -- Connect each component to the next with an artificial edge
+    let mut newEdges := g.edges
+    for i in [0:components.size - 1] do
+      let comp1 := components[i]!
+      let comp2 := components[i + 1]!
+      -- Connect first node of each component
+      if let (some n1, some n2) := (comp1[0]?, comp2[0]?) then
+        newEdges := newEdges.push { from_ := n1, to := n2, style := .dashed }
+    return { g with edges := newEdges }
+
 /-- Build graph from an array of Dress nodes with sorry information -/
 def buildGraph (nodesWithSorry : Array (Dress.NodeWithPos × Bool)) : Graph :=
   let (_, state) := (nodesWithSorry.forM fun (node, hasSorry) => processNode node hasSorry).run {}
@@ -155,7 +195,9 @@ def buildGraph (nodesWithSorry : Array (Dress.NodeWithPos × Bool)) : Graph :=
   let validIds := state.nodes.map (·.id) |>.toList |> Std.HashSet.ofList
   let validEdges := state.edges.filter fun e =>
     validIds.contains e.from_ && validIds.contains e.to
-  { nodes := state.nodes, edges := validEdges }
+  -- Ensure graph is connected: add artificial edges between disconnected components
+  let connectedGraph := ensureConnected { nodes := state.nodes, edges := validEdges }
+  connectedGraph
 
 end Builder
 
