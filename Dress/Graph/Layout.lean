@@ -56,16 +56,16 @@ structure LayoutGraph where
   height : Float
   deriving Repr, Inhabited
 
-/-- Layout configuration for left-to-right flow -/
+/-- Layout configuration for top-to-bottom flow -/
 structure LayoutConfig where
   /-- Minimum width of a node box -/
   nodeWidth : Float := 100.0
   /-- Height of a node box -/
   nodeHeight : Float := 40.0
-  /-- Horizontal gap between layers (x-axis distance) -/
-  layerGap : Float := 150.0
-  /-- Vertical gap between nodes in the same layer (y-axis distance) -/
-  nodeGap : Float := 60.0
+  /-- Vertical gap between layers (y-axis distance) -/
+  layerGap : Float := 100.0
+  /-- Horizontal gap between nodes in the same layer (x-axis distance) -/
+  nodeGap : Float := 40.0
   /-- Padding around the graph -/
   padding : Float := 20.0
   /-- Pixels per character for dynamic node width -/
@@ -369,76 +369,81 @@ def orderLayers (g : Graph) (iterations : Nat) : LayoutM Unit := do
 
   set { s with layerNodes }
 
-/-! ## Median-Based Coordinate Assignment -/
+/-! ## Median-Based Coordinate Assignment (for top-to-bottom layout) -/
 
-/-- Get all neighbor Y positions for a node (from all connected layers) -/
-def getNeighborYPositions (g : Graph) (positions : Std.HashMap String (Float × Float))
+/-- Get all neighbor X positions for a node (from all connected layers) -/
+def getNeighborXPositions (g : Graph) (positions : Std.HashMap String (Float × Float))
     (nodeId : String) : Array Float := Id.run do
-  let mut yPositions : Array Float := #[]
+  let mut xPositions : Array Float := #[]
 
   -- Get neighbors from incoming edges
   for edge in g.edges do
     if edge.to == nodeId then
       match positions.get? edge.from_ with
-      | some (_, y) => yPositions := yPositions.push y
+      | some (x, _) => xPositions := xPositions.push x
       | none => pure ()
     if edge.from_ == nodeId then
       match positions.get? edge.to with
-      | some (_, y) => yPositions := yPositions.push y
+      | some (x, _) => xPositions := xPositions.push x
       | none => pure ()
 
-  return yPositions
+  return xPositions
 
-/-- Calculate ideal Y position based on median of all neighbor Y positions -/
-def idealYPosition (g : Graph) (positions : Std.HashMap String (Float × Float))
+/-- Calculate ideal X position based on median of all neighbor X positions -/
+def idealXPosition (g : Graph) (positions : Std.HashMap String (Float × Float))
     (nodeId : String) : Option Float :=
-  let neighborYs := getNeighborYPositions g positions nodeId
-  if neighborYs.isEmpty then
+  let neighborXs := getNeighborXPositions g positions nodeId
+  if neighborXs.isEmpty then
     none
   else
     -- Use median for robustness
-    some (median neighborYs)
+    some (median neighborXs)
 
-/-- Resolve overlaps within a layer by pushing nodes apart -/
+/-- Resolve overlaps within a layer by pushing nodes apart horizontally -/
 def resolveOverlaps (layer : Array String) (positions : Std.HashMap String (Float × Float))
-    (config : LayoutConfig) : Std.HashMap String (Float × Float) := Id.run do
+    (nodeWidths : Std.HashMap String Float) (config : LayoutConfig) : Std.HashMap String (Float × Float) := Id.run do
   let mut result := positions
-  let minSeparation := config.nodeHeight + 5.0  -- Only prevent actual visual overlap
 
-  -- Sort nodes by Y position
-  let nodesWithY := layer.filterMap fun nodeId =>
+  -- Sort nodes by X position
+  let nodesWithX := layer.filterMap fun nodeId =>
     positions.get? nodeId |>.map fun (x, y) => (nodeId, x, y)
 
-  let sorted := nodesWithY.qsort (fun a b => a.2.2 < b.2.2)
+  let sorted := nodesWithX.qsort (fun a b => a.2.1 < b.2.1)
 
-  -- Push overlapping nodes apart, tracking the actual Y positions as we update
-  let mut lastY : Float := -1000.0  -- Start with a very low value
+  -- Push overlapping nodes apart, tracking the actual X positions as we update
+  let mut lastX : Float := -1000.0  -- Start with a very low value
+  let mut lastWidth : Float := 0.0
 
   for i in [0:sorted.size] do
     let (currId, currX, currY) := sorted[i]!
+    let currWidth := nodeWidths.get? currId |>.getD config.nodeWidth
 
-    -- Get the actual current Y (which may have been updated)
-    let actualY := match result.get? currId with
-      | some (_, y) => y
-      | none => currY
+    -- Get the actual current X (which may have been updated)
+    let actualX := match result.get? currId with
+      | some (x, _) => x
+      | none => currX
 
     if i == 0 then
-      lastY := actualY
+      lastX := actualX
+      lastWidth := currWidth
     else
-      let gap := actualY - lastY
+      let minSeparation := lastWidth + config.nodeGap
+      let gap := actualX - lastX
       if gap < minSeparation then
-        -- Push current node down
-        let newY := lastY + minSeparation
-        result := result.insert currId (currX, newY)
-        lastY := newY
+        -- Push current node right
+        let newX := lastX + minSeparation
+        result := result.insert currId (newX, currY)
+        lastX := newX
       else
-        lastY := actualY
+        lastX := actualX
+      lastWidth := currWidth
 
   return result
 
 /-- Single pass of position refinement: move nodes toward neighbor medians -/
 def refinePositionsPass (g : Graph) (layerNodes : Array (Array String))
-    (positions : Std.HashMap String (Float × Float)) (config : LayoutConfig)
+    (positions : Std.HashMap String (Float × Float))
+    (nodeWidths : Std.HashMap String Float) (config : LayoutConfig)
     (forward : Bool) : Std.HashMap String (Float × Float) := Id.run do
   let mut result := positions
 
@@ -452,14 +457,14 @@ def refinePositionsPass (g : Graph) (layerNodes : Array (Array String))
 
     -- Calculate ideal positions for this layer
     for nodeId in layer do
-      match (result.get? nodeId, idealYPosition g result nodeId) with
-      | (some (x, _currentY), some idealY) =>
-        -- Move toward ideal position (but keep X fixed)
-        result := result.insert nodeId (x, idealY)
+      match (result.get? nodeId, idealXPosition g result nodeId) with
+      | (some (_currentX, y), some idealX) =>
+        -- Move toward ideal position (but keep Y fixed)
+        result := result.insert nodeId (idealX, y)
       | _ => pure ()
 
     -- Resolve overlaps in this layer
-    result := resolveOverlaps layer result config
+    result := resolveOverlaps layer result nodeWidths config
 
   return result
 
@@ -470,15 +475,16 @@ def refinePositions (g : Graph) (config : LayoutConfig) (refinementIterations : 
 
   for _iter in [0:refinementIterations] do
     -- Forward pass
-    positions := refinePositionsPass g s.layerNodes positions config true
+    positions := refinePositionsPass g s.layerNodes positions s.nodeWidths config true
     -- Backward pass
-    positions := refinePositionsPass g s.layerNodes positions config false
+    positions := refinePositionsPass g s.layerNodes positions s.nodeWidths config false
 
   set { s with positions }
 
 /-- Assign initial coordinates to nodes (grid-based starting point)
-    - Layer index determines x position (sources on left, sinks on right)
-    - Node index within layer determines initial y position -/
+    Top-to-bottom layout:
+    - Layer index determines y position (sources at top, sinks at bottom)
+    - Node index within layer determines initial x position -/
 def assignInitialCoordinates (g : Graph) (config : LayoutConfig) : LayoutM Unit := do
   let s ← get
   let mut positions : Std.HashMap String (Float × Float) := {}
@@ -489,35 +495,37 @@ def assignInitialCoordinates (g : Graph) (config : LayoutConfig) : LayoutM Unit 
     let width := computeNodeWidth config node.label
     nodeWidths := nodeWidths.insert node.id width
 
-  -- Find the maximum layer height (for vertical centering)
-  let maxNodesInLayer := s.layerNodes.foldl (fun acc layer => max acc layer.size) 0
-  let totalMaxHeight := maxNodesInLayer.toFloat * (config.nodeHeight + config.nodeGap) - config.nodeGap
-
-  -- Track cumulative x position (since widths vary)
-  let mut currentX := config.padding
-
-  -- Find max width per layer for proper spacing
-  let layerMaxWidths := s.layerNodes.map fun layer =>
-    layer.foldl (fun acc nodeId =>
+  -- Find the maximum layer width (for horizontal centering)
+  -- Calculate total width needed for each layer
+  let layerTotalWidths := s.layerNodes.map fun layer =>
+    let widthSum := layer.foldl (fun acc nodeId =>
       let w := nodeWidths.get? nodeId |>.getD config.nodeWidth
-      max acc w) config.nodeWidth
+      acc + w) 0.0
+    let gapsWidth := if layer.size > 1 then (layer.size - 1).toFloat * config.nodeGap else 0.0
+    widthSum + gapsWidth
+
+  let maxLayerWidth := layerTotalWidths.foldl max 0.0
+
+  -- Track cumulative y position
+  let mut currentY := config.padding
 
   for layerIdx in [0:s.layerNodes.size] do
     let layer := s.layerNodes[layerIdx]!
-    let layerWidth := layerMaxWidths[layerIdx]!
+    let layerTotalWidth := layerTotalWidths[layerIdx]!
 
-    -- Calculate vertical centering offset for this layer
-    let layerHeight := layer.size.toFloat * (config.nodeHeight + config.nodeGap) - config.nodeGap
-    let verticalOffset := (totalMaxHeight - layerHeight) / 2.0
+    -- Calculate horizontal centering offset for this layer
+    let horizontalOffset := (maxLayerWidth - layerTotalWidth) / 2.0
 
+    -- Place nodes in this layer horizontally
+    let mut currentX := config.padding + horizontalOffset
     for nodeIdx in [0:layer.size] do
       let nodeId := layer[nodeIdx]!
-      -- Center smaller layers vertically
-      let y := config.padding + verticalOffset + nodeIdx.toFloat * (config.nodeHeight + config.nodeGap)
-      positions := positions.insert nodeId (currentX, y)
+      let nodeWidth := nodeWidths.get? nodeId |>.getD config.nodeWidth
+      positions := positions.insert nodeId (currentX, currentY)
+      currentX := currentX + nodeWidth + config.nodeGap
 
-    -- Move x position for next layer
-    currentX := currentX + layerWidth + config.layerGap
+    -- Move y position for next layer
+    currentY := currentY + config.nodeHeight + config.layerGap
 
   set { s with positions, nodeWidths }
 
@@ -532,9 +540,9 @@ def assignCoordinates (g : Graph) (config : LayoutConfig) : LayoutM Unit := do
   -- Step 2: Refine positions toward neighbor medians (5 iterations)
   refinePositions g config 5
 
-/-- Create layout edges with control points (left-to-right flow)
-    - Edges start from right edge of source node
-    - Edges end at left edge of target node
+/-- Create layout edges with control points (top-to-bottom flow)
+    - Edges start from bottom edge of source node
+    - Edges end at top edge of target node
     - Smooth bezier curves using offset-based control points -/
 def createLayoutEdges (g : Graph) (config : LayoutConfig) : LayoutM (Array LayoutEdge) := do
   let s ← get
@@ -543,22 +551,23 @@ def createLayoutEdges (g : Graph) (config : LayoutConfig) : LayoutM (Array Layou
   for edge in g.edges do
     match (s.positions.get? edge.from_, s.positions.get? edge.to) with
     | (some (x1, y1), some (x2, y2)) =>
-      -- Get dynamic width for source node
+      -- Get dynamic width for source and target nodes
       let sourceWidth := s.nodeWidths.get? edge.from_ |>.getD config.nodeWidth
-      -- Start at right edge of source, vertically centered
-      let startX := x1 + sourceWidth
-      let startY := y1 + config.nodeHeight / 2
-      -- End at left edge of target, vertically centered
-      let endX := x2
-      let endY := y2 + config.nodeHeight / 2
+      let targetWidth := s.nodeWidths.get? edge.to |>.getD config.nodeWidth
+      -- Start at bottom edge of source, horizontally centered
+      let startX := x1 + sourceWidth / 2
+      let startY := y1 + config.nodeHeight
+      -- End at top edge of target, horizontally centered
+      let endX := x2 + targetWidth / 2
+      let endY := y2
 
       -- Smooth bezier: offset-based control points for gradual curves
       -- Using 1/3 offset creates smooth S-curves that don't overlap nodes
-      let offset := (endX - startX) / 3.0
+      let offset := (endY - startY) / 3.0
       let points := #[
         (startX, startY),
-        (startX + offset, startY),
-        (endX - offset, endY),
+        (startX, startY + offset),
+        (endX, endY - offset),
         (endX, endY)
       ]
       layoutEdges := layoutEdges.push { from_ := edge.from_, to := edge.to, points, style := edge.style }
