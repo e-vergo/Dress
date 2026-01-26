@@ -128,38 +128,99 @@ def renderDefs (config : SvgConfig) : String :=
   "  </marker>\n" ++
   "</defs>\n"
 
-/-- Generate legend -/
-def renderLegend (config : SvgConfig) (x y : Float) : String := Id.run do
-  let items := #[
+/-- Generate enhanced legend with border and shape examples -/
+def renderLegend (config : SvgConfig) (_x _y : Float) : String := Id.run do
+  -- Fixed position at top-left
+  let legendX : Float := 20.0
+  let legendY : Float := 20.0
+
+  -- Legend dimensions
+  let boxSize : Float := 18.0
+  let gap : Float := 8.0
+  let itemHeight : Float := 26.0
+  let fontSize : Float := 14.0
+  let padding : Float := 15.0
+  let sectionGap : Float := 20.0
+
+  -- Color items
+  let colorItems := #[
     ("Stated", config.statedColor),
     ("Proven", config.provedColor),
     ("Not Ready", config.notReadyColor),
     ("Mathlib", config.mathLibOkColor)
   ]
-  let boxSize : Float := 15.0
-  let gap : Float := 5.0
-  let itemHeight : Float := 20.0
 
-  let mut svg := s!"<g transform=\"translate({x}, {y})\">\n"
-  for i in [0:items.size] do
-    let (label, color) := items[i]!
-    let itemY := i.toFloat * itemHeight
-    svg := svg ++ s!"  <rect x=\"0\" y=\"{itemY}\" width=\"{boxSize}\" height=\"{boxSize}\" " ++
-      s!"fill=\"{color}\" stroke=\"{config.strokeColor}\" stroke-width=\"1\"/>\n"
-    svg := svg ++ s!"  <text x=\"{boxSize + gap}\" y=\"{itemY + boxSize - 3}\" " ++
-      s!"font-family=\"{config.fontFamily}\" font-size=\"{config.fontSize - 2}\" " ++
+  -- Shape items (ellipse for theorems, box for definitions)
+  let shapeItems := #[
+    ("Theorems/Lemmas", "ellipse"),
+    ("Definitions", "box")
+  ]
+
+  -- Calculate legend height
+  let colorSectionHeight := colorItems.size.toFloat * itemHeight
+  let shapeSectionHeight := shapeItems.size.toFloat * itemHeight
+  let totalHeight := colorSectionHeight + sectionGap + shapeSectionHeight + padding * 2 + itemHeight
+  let legendWidth : Float := 180.0
+
+  let mut svg := s!"<g class=\"legend\" transform=\"translate({legendX}, {legendY})\">\n"
+
+  -- Background with border
+  svg := svg ++ s!"  <rect x=\"0\" y=\"0\" width=\"{legendWidth}\" height=\"{totalHeight}\" " ++
+    s!"fill=\"white\" fill-opacity=\"0.95\" stroke=\"{config.strokeColor}\" stroke-width=\"1\" rx=\"5\" ry=\"5\"/>\n"
+
+  -- Title
+  svg := svg ++ s!"  <text x=\"{padding}\" y=\"{padding + fontSize}\" " ++
+    s!"font-family=\"{config.fontFamily}\" font-size=\"{fontSize + 2}\" font-weight=\"bold\" " ++
+    s!"fill=\"{config.textColor}\">Legend</text>\n"
+
+  let contentStartY := padding + itemHeight
+
+  -- Color status section
+  for i in [0:colorItems.size] do
+    let (label, color) := colorItems[i]!
+    let itemY := contentStartY + i.toFloat * itemHeight
+    svg := svg ++ s!"  <rect x=\"{padding}\" y=\"{itemY}\" width=\"{boxSize}\" height=\"{boxSize}\" " ++
+      s!"fill=\"{color}\" stroke=\"{config.strokeColor}\" stroke-width=\"1\" rx=\"3\" ry=\"3\"/>\n"
+    svg := svg ++ s!"  <text x=\"{padding + boxSize + gap}\" y=\"{itemY + boxSize - 4}\" " ++
+      s!"font-family=\"{config.fontFamily}\" font-size=\"{fontSize}\" " ++
       s!"fill=\"{config.textColor}\">{label}</text>\n"
+
+  -- Shapes section (after color items + gap)
+  let shapeStartY := contentStartY + colorItems.size.toFloat * itemHeight + sectionGap
+
+  for i in [0:shapeItems.size] do
+    let (label, shape) := shapeItems[i]!
+    let itemY := shapeStartY + i.toFloat * itemHeight
+    let cx := padding + boxSize / 2
+    let cy := itemY + boxSize / 2
+
+    if shape == "ellipse" then
+      -- Mini ellipse for theorems
+      let rx := boxSize / 2
+      let ry := boxSize / 2.5
+      svg := svg ++ s!"  <ellipse cx=\"{cx}\" cy=\"{cy}\" rx=\"{rx}\" ry=\"{ry}\" " ++
+        s!"fill=\"{config.statedColor}\" stroke=\"{config.strokeColor}\" stroke-width=\"1\"/>\n"
+    else
+      -- Mini rectangle for definitions
+      svg := svg ++ s!"  <rect x=\"{padding}\" y=\"{itemY}\" width=\"{boxSize}\" height=\"{boxSize}\" " ++
+        s!"fill=\"{config.statedColor}\" stroke=\"{config.strokeColor}\" stroke-width=\"1\" rx=\"3\" ry=\"3\"/>\n"
+
+    svg := svg ++ s!"  <text x=\"{padding + boxSize + gap}\" y=\"{itemY + boxSize - 4}\" " ++
+      s!"font-family=\"{config.fontFamily}\" font-size=\"{fontSize}\" " ++
+      s!"fill=\"{config.textColor}\">{label}</text>\n"
+
   svg := svg ++ "</g>\n"
   return svg
 
 /-- Generate complete SVG from a layout graph -/
 def render (layout : Layout.LayoutGraph) (config : SvgConfig := {}) : String := Id.run do
-  let legendWidth : Float := 100.0
-  let totalWidth := layout.width + legendWidth
+  -- No extra width for legend - it's positioned at top-left overlaying the graph
+  let totalWidth := layout.width
+  let totalHeight := layout.height
 
   let mut svg := s!"<svg xmlns=\"http://www.w3.org/2000/svg\" " ++
-    s!"width=\"{totalWidth}\" height=\"{layout.height}\" " ++
-    s!"viewBox=\"0 0 {totalWidth} {layout.height}\">\n"
+    s!"width=\"{totalWidth}\" height=\"{totalHeight}\" " ++
+    s!"viewBox=\"0 0 {totalWidth} {totalHeight}\">\n"
 
   -- Background
   svg := svg ++ s!"<rect width=\"100%\" height=\"100%\" fill=\"{config.backgroundColor}\"/>\n"
@@ -179,8 +240,8 @@ def render (layout : Layout.LayoutGraph) (config : SvgConfig := {}) : String := 
     svg := svg ++ renderNode config node
   svg := svg ++ "</g>\n"
 
-  -- Legend
-  svg := svg ++ renderLegend config (layout.width + 10) 10
+  -- Legend at top-left (rendered last so it's on top)
+  svg := svg ++ renderLegend config 20.0 20.0
 
   svg := svg ++ "</svg>"
   return svg
