@@ -403,7 +403,7 @@ def idealYPosition (g : Graph) (positions : Std.HashMap String (Float × Float))
 def resolveOverlaps (layer : Array String) (positions : Std.HashMap String (Float × Float))
     (config : LayoutConfig) : Std.HashMap String (Float × Float) := Id.run do
   let mut result := positions
-  let minSeparation := config.nodeHeight + config.nodeGap / 2.0
+  let minSeparation := config.nodeHeight + 5.0  -- Only prevent actual visual overlap
 
   -- Sort nodes by Y position
   let nodesWithY := layer.filterMap fun nodeId =>

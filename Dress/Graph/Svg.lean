@@ -131,8 +131,8 @@ def renderDefs (config : SvgConfig) : String :=
 /-- Generate enhanced legend with border and shape examples -/
 def renderLegend (config : SvgConfig) (_x _y : Float) : String := Id.run do
   -- Fixed position at top-left
-  let legendX : Float := 20.0
-  let legendY : Float := 20.0
+  let legendX : Float := 5.0
+  let legendY : Float := 5.0
 
   -- Legend dimensions
   let boxSize : Float := 18.0
