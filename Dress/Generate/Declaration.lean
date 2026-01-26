@@ -52,26 +52,41 @@ def writeDeclarationArtifactsFromNode (name : Name) (node : Architect.Node)
   let declDir := Paths.getDeclarationDir buildDir moduleName label
   IO.FS.createDirAll declDir
 
-  -- Write .tex file using the Node-based generator
+  -- Time: Generate .tex content
+  let texGenStart ← IO.monoMsNow
   let texContent ← generateDeclarationTexFromNode name node highlighting none file location
+  let texGenEnd ← IO.monoMsNow
+
+  -- Time: Write .tex file
+  let texWriteStart ← IO.monoMsNow
   let texPath := Paths.getDeclarationTexPath buildDir moduleName label
   IO.FS.writeFile texPath texContent
+  let texWriteEnd ← IO.monoMsNow
   trace[blueprint.debug] "Wrote {texPath}"
 
-  -- Write .html file and hover data if we have highlighting
-  if let some hl := highlighting then
-    -- Use renderHighlightedWithHovers to get both HTML and hover JSON
+  -- Time: HTML rendering and writing
+  let (htmlRenderTime, htmlWriteTime) ← if let some hl := highlighting then
+    -- Time: Render HTML with hovers
+    let renderStart ← IO.monoMsNow
     let (htmlContent, hoverJson) := HtmlRender.renderHighlightedWithHovers hl
+    let renderEnd ← IO.monoMsNow
+
+    -- Time: Write HTML and hovers
+    let writeStart ← IO.monoMsNow
     let htmlPath := Paths.getDeclarationHtmlPath buildDir moduleName label
     IO.FS.writeFile htmlPath htmlContent
-    trace[blueprint.debug] "Wrote {htmlPath}"
-
-    -- Write hover data JSON for Tippy.js tooltips
     let hoversPath := Paths.getDeclarationHoversPath buildDir moduleName label
     IO.FS.writeFile hoversPath hoverJson
-    trace[blueprint.debug] "Wrote {hoversPath}"
+    let writeEnd ← IO.monoMsNow
 
-  -- Write .json file with metadata
+    trace[blueprint.debug] "Wrote {htmlPath}"
+    trace[blueprint.debug] "Wrote {hoversPath}"
+    pure (renderEnd - renderStart, writeEnd - writeStart)
+  else
+    pure (0, 0)
+
+  -- Time: Write .json file with metadata
+  let jsonWriteStart ← IO.monoMsNow
   let jsonPath := Paths.getDeclarationJsonPath buildDir moduleName label
   let jsonContent := match highlighting with
     | some hl =>
@@ -80,15 +95,25 @@ def writeDeclarationArtifactsFromNode (name : Name) (node : Architect.Node)
     | none =>
       s!"\{\"name\": \"{name}\", \"label\": \"{label}\"}"
   IO.FS.writeFile jsonPath jsonContent
+  let jsonWriteEnd ← IO.monoMsNow
   trace[blueprint.debug] "Wrote {jsonPath}"
 
-  -- Write manifest.entry for later aggregation into manifest.json
-  -- This allows Runway (or a Lake facet) to build a label -> path mapping
+  -- Time: Write manifest.entry
+  let manifestWriteStart ← IO.monoMsNow
   let manifestEntryPath := Paths.getManifestEntryPath buildDir moduleName label
   let relativePath := Paths.getDeclarationRelativePath moduleName label
   let manifestEntryContent := s!"\{\"label\": \"{label}\", \"path\": \"{relativePath}\"}"
   IO.FS.writeFile manifestEntryPath manifestEntryContent
+  let manifestWriteEnd ← IO.monoMsNow
   trace[blueprint.debug] "Wrote {manifestEntryPath}"
+
+  -- Print sub-operation timing breakdown
+  IO.println s!"[DRESS TIMING]   texGen: {texGenEnd - texGenStart}ms for {name}"
+  IO.println s!"[DRESS TIMING]   texWrite: {texWriteEnd - texWriteStart}ms for {name}"
+  IO.println s!"[DRESS TIMING]   htmlRender: {htmlRenderTime}ms for {name}"
+  IO.println s!"[DRESS TIMING]   htmlWrite: {htmlWriteTime}ms for {name}"
+  IO.println s!"[DRESS TIMING]   jsonWrite: {jsonWriteEnd - jsonWriteStart}ms for {name}"
+  IO.println s!"[DRESS TIMING]   manifestWrite: {manifestWriteEnd - manifestWriteStart}ms for {name}"
 
 end Dress.Generate
 

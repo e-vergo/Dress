@@ -130,7 +130,11 @@ def elabDeclAndCaptureHighlighting (stx : Syntax) (declId : Syntax) (_mods : Opt
       let env ← getEnv
       let resolvedName := if env.contains fullName then fullName else name
       if env.contains resolvedName then
+        -- Time the captureHighlighting operation
+        let captureStart ← IO.monoMsNow
         captureHighlighting resolvedName stx
+        let captureEnd ← IO.monoMsNow
+        let captureTime := captureEnd - captureStart
 
         -- Auto-export when dress mode is enabled (env var, option, or marker file)
         -- Check BLUEPRINT_DRESS=1 environment variable OR blueprint.dress option
@@ -159,8 +163,18 @@ def elabDeclAndCaptureHighlighting (stx : Syntax) (declId : Syntax) (_mods : Opt
               let location ← liftTermElabM do
                 Lean.findDeclarationRanges? resolvedName
 
+              -- Time the writeDeclarationArtifactsFromNode operation
+              let writeStart ← IO.monoMsNow
               -- Write all artifacts (.tex, .html, .json) using the Node-based function
               Generate.writeDeclarationArtifactsFromNode resolvedName node highlighting (some file) (location.map (·.range))
+              let writeEnd ← IO.monoMsNow
+              let writeTime := writeEnd - writeStart
+
+              -- Calculate and print total timing
+              let totalTime := captureTime + writeTime
+              IO.println s!"[DRESS TIMING] captureHighlighting: {captureTime}ms for {resolvedName}"
+              IO.println s!"[DRESS TIMING] writeArtifacts: {writeTime}ms for {resolvedName}"
+              IO.println s!"[DRESS TIMING] TOTAL: {totalTime}ms for {resolvedName}"
 
               trace[blueprint] "Wrote artifacts for {resolvedName} with label {node.latexLabel}"
             catch e =>

@@ -92,7 +92,8 @@ def captureHighlighting (declName : Name) (stx : Syntax) : CommandElabM Unit := 
       trace[blueprint.debug] "No info trees available for {declName}"
       return
 
-    -- Get messages for this syntax range
+    -- Time: Message filtering
+    let msgFilterStart ← IO.monoMsNow
     let allMessages := (← get).messages.toArray
     let fileMap := (← read).fileMap
     let messages := allMessages.filter fun msg =>
@@ -106,10 +107,17 @@ def captureHighlighting (declName : Name) (stx : Syntax) : CommandElabM Unit := 
           let stxEndLine := fileMap.toPosition endPos |>.line
           msgStartPos.line >= stxStartLine && msgStartPos.line <= stxEndLine
         | _, _ => false
+    let msgFilterEnd ← IO.monoMsNow
 
-    -- Run SubVerso highlighting in TermElabM
+    -- Time: SubVerso highlighting extraction
+    let subversoStart ← IO.monoMsNow
     let hl? ← liftTermElabM do
       captureHighlightingFromInfoTrees stx messages trees []
+    let subversoEnd ← IO.monoMsNow
+
+    -- Print timing breakdown for captureHighlighting internals
+    IO.println s!"[DRESS TIMING]   msgFilter: {msgFilterEnd - msgFilterStart}ms for {declName}"
+    IO.println s!"[DRESS TIMING]   subversoHighlight: {subversoEnd - subversoStart}ms for {declName}"
 
     match hl? with
     | some hl =>
