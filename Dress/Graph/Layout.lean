@@ -543,10 +543,25 @@ def assignCoordinates (g : Graph) (config : LayoutConfig) : LayoutM Unit := do
 /-- Create layout edges with control points (top-to-bottom flow)
     - Edges start from bottom edge of source node
     - Edges end at top edge of target node
-    - Smooth bezier curves using offset-based control points -/
+    - Smooth bezier curves using offset-based control points
+    - Multiple edges to/from a node are distributed along the node boundary -/
 def createLayoutEdges (g : Graph) (config : LayoutConfig) : LayoutM (Array LayoutEdge) := do
   let s ← get
   let mut layoutEdges : Array LayoutEdge := #[]
+
+  -- Step 1: Count outgoing and incoming edges per node
+  let mut outgoingCounts : Std.HashMap String Nat := {}
+  let mut incomingCounts : Std.HashMap String Nat := {}
+
+  for edge in g.edges do
+    outgoingCounts := outgoingCounts.insert edge.from_
+      ((outgoingCounts.get? edge.from_).getD 0 + 1)
+    incomingCounts := incomingCounts.insert edge.to
+      ((incomingCounts.get? edge.to).getD 0 + 1)
+
+  -- Step 2: Track edge index per node as we process edges
+  let mut outgoingIndex : Std.HashMap String Nat := {}
+  let mut incomingIndex : Std.HashMap String Nat := {}
 
   for edge in g.edges do
     match (s.positions.get? edge.from_, s.positions.get? edge.to) with
@@ -554,12 +569,32 @@ def createLayoutEdges (g : Graph) (config : LayoutConfig) : LayoutM (Array Layou
       -- Get dynamic width for source and target nodes
       let sourceWidth := s.nodeWidths.get? edge.from_ |>.getD config.nodeWidth
       let targetWidth := s.nodeWidths.get? edge.to |>.getD config.nodeWidth
-      -- Start at bottom edge of source, horizontally centered
-      let startX := x1 + sourceWidth / 2
+
+      -- Get counts and current indices
+      let outCount := outgoingCounts.get? edge.from_ |>.getD 1
+      let inCount := incomingCounts.get? edge.to |>.getD 1
+      let outIdx := outgoingIndex.get? edge.from_ |>.getD 0
+      let inIdx := incomingIndex.get? edge.to |>.getD 0
+
+      -- Calculate spread for source (bottom edge) - use 80% of node width
+      let spreadWidth := sourceWidth * 0.8
+      let outSpacing := if outCount > 1 then spreadWidth / (outCount.toFloat - 1) else 0.0
+      let outOffsetX := if outCount > 1 then -spreadWidth/2 + outSpacing * outIdx.toFloat else 0.0
+
+      -- Calculate spread for target (top edge) - use 80% of node width
+      let inSpacing := if inCount > 1 then (targetWidth * 0.8) / (inCount.toFloat - 1) else 0.0
+      let inOffsetX := if inCount > 1 then -(targetWidth * 0.8)/2 + inSpacing * inIdx.toFloat else 0.0
+
+      -- Start at bottom edge of source, with distributed X offset
+      let startX := x1 + sourceWidth / 2 + outOffsetX
       let startY := y1 + config.nodeHeight
-      -- End at top edge of target, horizontally centered
-      let endX := x2 + targetWidth / 2
+      -- End at top edge of target, with distributed X offset
+      let endX := x2 + targetWidth / 2 + inOffsetX
       let endY := y2
+
+      -- Increment indices for next edge from/to these nodes
+      outgoingIndex := outgoingIndex.insert edge.from_ (outIdx + 1)
+      incomingIndex := incomingIndex.insert edge.to (inIdx + 1)
 
       -- Smooth bezier: offset-based control points for gradual curves
       -- Using 1/3 offset creates smooth S-curves that don't overlap nodes
