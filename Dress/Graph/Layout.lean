@@ -635,17 +635,30 @@ def createLayoutEdges (g : Graph) (config : LayoutConfig) : LayoutM (Array Layou
       let (startX, startY) := clipToNodeBoundary sourceLayoutNode targetCx targetCy
       let (endX, endY) := clipToNodeBoundary targetLayoutNode sourceCx sourceCy
 
-      -- Smooth bezier: offset-based control points for gradual curves
-      let dy := endY - startY
-      let offset := dy.abs / 3.0
-      let cp1Y := startY + (if dy > 0 then offset else -offset)
-      let cp2Y := endY - (if dy > 0 then offset else -offset)
-      let points := #[
-        (startX, startY),
-        (startX, cp1Y),
-        (endX, cp2Y),
-        (endX, endY)
-      ]
+      -- Smooth bezier: control points aligned with center-to-center direction
+      -- This ensures arrowheads point toward the target node center
+      let dx := targetCx - sourceCx
+      let dy := targetCy - sourceCy
+      let dist := Float.sqrt (dx * dx + dy * dy)
+
+      -- Handle edge case where source and target are at the same position
+      let points := if dist < 0.001 then
+        #[(startX, startY), (startX, startY), (endX, endY), (endX, endY)]
+      else
+        -- Normalize direction and compute offset
+        let dirX := dx / dist
+        let dirY := dy / dist
+        let offset := dist / 4.0
+
+        -- Control point 1: offset from start point toward target
+        let cp1X := startX + dirX * offset
+        let cp1Y := startY + dirY * offset
+
+        -- Control point 2: offset from end point back toward source
+        let cp2X := endX - dirX * offset
+        let cp2Y := endY - dirY * offset
+
+        #[(startX, startY), (cp1X, cp1Y), (cp2X, cp2Y), (endX, endY)]
       layoutEdges := layoutEdges.push { from_ := edge.from_, to := edge.to, points, style := edge.style }
     | _ => pure ()
 
