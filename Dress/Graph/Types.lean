@@ -15,8 +15,7 @@ namespace Dress.Graph
 
 -- Re-export NodeStatus from LeanArchitect for visualization
 -- This ensures consistency between the blueprint attribute and graph rendering
-open Architect in
-abbrev NodeStatus := Architect.NodeStatus
+export Architect (NodeStatus)
 
 /-- Node shape for visualization -/
 inductive NodeShape where
