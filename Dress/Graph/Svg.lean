@@ -16,11 +16,15 @@ namespace Dress.Graph.Svg
 structure SvgConfig where
   /-- Background color -/
   backgroundColor : String := "#ffffff"
-  /-- Node fill colors by status -/
-  statedColor : String := "#FFD700"       -- Yellow (was #f0f0f0)
-  provedColor : String := "#90EE90"       -- Light green (unchanged)
-  notReadyColor : String := "#F4A460"     -- Orange (was #FFB6C1)
-  mathLibOkColor : String := "#191970"    -- Dark blue (was #87CEEB)
+  /-- Node fill colors by status (8 statuses) -/
+  notReadyColor : String := "#F4A460"     -- Orange - not ready to formalize
+  statedColor : String := "#FFD700"       -- Yellow - statement exists, no Lean
+  readyColor : String := "#20B2AA"        -- Teal - ready to formalize
+  sorryColor : String := "#8B0000"        -- Deep red - has sorryAx
+  provenColor : String := "#90EE90"       -- Light green - formalized without sorry
+  fullyProvenColor : String := "#228B22"  -- Dark green - this + all deps proven
+  mathlibReadyColor : String := "#4169E1" -- Blue - ready to upstream
+  inMathlibColor : String := "#191970"    -- Dark blue - already in Mathlib
   /-- Node stroke color -/
   strokeColor : String := "#333333"
   /-- Node stroke width -/
@@ -41,10 +45,14 @@ structure SvgConfig where
 
 /-- Get fill color for a node status -/
 def getStatusColor (config : SvgConfig) : NodeStatus → String
-  | .stated => config.statedColor
-  | .proved => config.provedColor
   | .notReady => config.notReadyColor
-  | .mathLibOk => config.mathLibOkColor
+  | .stated => config.statedColor
+  | .ready => config.readyColor
+  | .sorry => config.sorryColor
+  | .proven => config.provenColor
+  | .fullyProven => config.fullyProvenColor
+  | .mathlibReady => config.mathlibReadyColor
+  | .inMathlib => config.inMathlibColor
 
 /-- Escape text for SVG -/
 def escapeXml (s : String) : String :=
@@ -142,12 +150,16 @@ def renderLegend (config : SvgConfig) (_x _y : Float) : String := Id.run do
   let padding : Float := 15.0
   let sectionGap : Float := 20.0
 
-  -- Color items
+  -- Color items - all 8 statuses
   let colorItems := #[
-    ("Stated", config.statedColor),
-    ("Proven", config.provedColor),
     ("Not Ready", config.notReadyColor),
-    ("Mathlib", config.mathLibOkColor)
+    ("Stated", config.statedColor),
+    ("Ready", config.readyColor),
+    ("Sorry", config.sorryColor),
+    ("Proven", config.provenColor),
+    ("Fully Proven", config.fullyProvenColor),
+    ("Mathlib Ready", config.mathlibReadyColor),
+    ("In Mathlib", config.inMathlibColor)
   ]
 
   -- Shape items (ellipse for theorems, box for definitions)

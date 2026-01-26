@@ -13,13 +13,10 @@ Core types for dependency graph construction and visualization.
 
 namespace Dress.Graph
 
-/-- Node status for visualization coloring -/
-inductive NodeStatus where
-  | stated       -- Has statement, no Lean
-  | proved       -- leanOk = true (has proof)
-  | notReady     -- notReady = true
-  | mathLibOk    -- Proved by Mathlib reference
-  deriving Repr, Inhabited, BEq
+-- Re-export NodeStatus from LeanArchitect for visualization
+-- This ensures consistency between the blueprint attribute and graph rendering
+open Architect in
+abbrev NodeStatus := Architect.NodeStatus
 
 /-- Node shape for visualization -/
 inductive NodeShape where

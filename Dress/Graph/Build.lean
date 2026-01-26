@@ -57,12 +57,48 @@ def addEdge (from_ to : String) (style : EdgeStyle := .solid) : BuilderM Unit :=
 def registerLabel (label nodeId : String) : BuilderM Unit := do
   modify fun s => { s with labelToId := s.labelToId.insert label nodeId }
 
-/-- Determine node status from Architect.Node -/
-def getStatus (node : Architect.Node) (hasLean : Bool) : NodeStatus :=
-  if node.notReady then .notReady
-  else if node.proof.isSome && hasLean then .proved
-  else if hasLean then .stated
-  else .stated
+/-- Determine node status from Architect.Node.
+    This computes the final visualization status based on:
+    1. Manual status from @[blueprint] attribute
+    2. Derived statuses (sorry, proven) based on leanOk
+
+    Priority order (highest to lowest):
+    1. If manual `inMathlib` flag → inMathlib
+    2. If derived inMathlib (module prefix check) → inMathlib (handled elsewhere)
+    3. If manual `mathlibReady` flag → mathlibReady
+    4. If hasLean and all dependencies proven → fullyProven (TODO: graph traversal)
+    5. If hasLean and no sorryAx → proven
+    6. If hasLean but has sorryAx → sorry
+    7. If manual `ready` flag → ready
+    8. If manual `notReady` flag → notReady
+    9. Otherwise → stated
+
+    Note: The `leanOk` field (no sorryAx) would need to be passed in for proper
+    sorry detection. For now we use hasLean as a proxy for proven status.
+    The fullyProven computation requires graph traversal and is TODO.
+-/
+def getStatus (node : Architect.Node) (hasLean : Bool) (hasSorry : Bool := false) : NodeStatus :=
+  -- Check for manual statuses first (highest priority)
+  match node.status with
+  | .inMathlib => .inMathlib
+  | .mathlibReady => .mathlibReady
+  | .ready =>
+    -- Even if marked ready, if we have Lean code, derive the actual status
+    if hasLean then
+      if hasSorry then .sorry else .proven
+    else
+      .ready
+  | .notReady => .notReady
+  | .stated =>
+    -- Default: derive from Lean presence
+    if hasLean then
+      if hasSorry then .sorry else .proven
+    else
+      .stated
+  -- These are derived statuses that shouldn't be manually set but handle gracefully
+  | .sorry => .sorry
+  | .proven => .proven
+  | .fullyProven => .fullyProven  -- TODO: would need graph computation
 
 /-- Determine node shape from environment type -/
 def getShape (envType : String) : NodeShape :=
