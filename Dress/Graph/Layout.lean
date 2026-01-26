@@ -931,6 +931,12 @@ def resolveOverlaps (layer : Array String) (positions : Std.HashMap String (Floa
 
   return result
 
+/-- Count the number of edges connected to a node (degree) -/
+def nodeDegree (g : Graph) (nodeId : String) : Nat :=
+  g.edges.foldl (fun count e =>
+    let inc := if e.from_ == nodeId || e.to == nodeId then 1 else 0
+    count + inc) 0
+
 /-- Single pass of position refinement: move nodes toward neighbor medians -/
 def refinePositionsPass (g : Graph) (layerNodes : Array (Array String))
     (positions : Std.HashMap String (Float × Float))
@@ -949,9 +955,14 @@ def refinePositionsPass (g : Graph) (layerNodes : Array (Array String))
     -- Calculate ideal positions for this layer
     for nodeId in layer do
       match (result.get? nodeId, idealXPosition g result nodeId) with
-      | (some (_currentX, y), some idealX) =>
-        -- Move toward ideal position (but keep Y fixed)
-        result := result.insert nodeId (idealX, y)
+      | (some (currentX, y), some idealX) =>
+        -- Apply stronger pull for isolated nodes (degree <= 2)
+        -- This ensures nodes with few connections stay close to their neighbors
+        let degree := nodeDegree g nodeId
+        let pullFactor := if degree <= 2 then 1.0 else 0.7
+        -- Interpolate between current and ideal position
+        let newX := currentX + pullFactor * (idealX - currentX)
+        result := result.insert nodeId (newX, y)
       | _ => pure ()
 
     -- Resolve overlaps in this layer
@@ -964,7 +975,9 @@ def refinePositions (g : Graph) (config : LayoutConfig) (refinementIterations : 
   let s ← get
   let mut positions := s.positions
 
-  for _iter in [0:refinementIterations] do
+  -- Use at least 12 iterations for better convergence, especially for isolated nodes
+  let iterations := max refinementIterations 12
+  for _iter in [0:iterations] do
     -- Forward pass
     positions := refinePositionsPass g s.layerNodes positions s.nodeWidths config true
     -- Backward pass
