@@ -5,6 +5,8 @@ Released under Apache 2.0 license as described in the file LICENSE.
 import Lean
 import Architect.Basic
 
+open Lean
+
 /-!
 # Dependency Graph Types
 
@@ -13,9 +15,9 @@ Core types for dependency graph construction and visualization.
 
 namespace Dress.Graph
 
--- Re-export NodeStatus from LeanArchitect for visualization
+-- Re-export NodeStatus and Priority from LeanArchitect for visualization
 -- This ensures consistency between the blueprint attribute and graph rendering
-export Architect (NodeStatus)
+export Architect (NodeStatus Priority)
 
 /-- Node shape for visualization -/
 inductive NodeShape where
@@ -47,7 +49,34 @@ structure Node where
   leanDecls : Array Lean.Name
   /-- Whether this node's status was manually set via @[blueprint] attribute -/
   isManuallyTagged : Bool := false
+  /-- Whether this is a key theorem -/
+  keyTheorem : Bool := false
+  /-- User message/notes -/
+  message : Option String := none
+  /-- Priority level -/
+  priority : Option Priority := none
+  /-- Blocked reason -/
+  blocked : Option String := none
+  /-- Potential issue description -/
+  potentialIssue : Option String := none
+  /-- Technical debt notes -/
+  technicalDebt : Option String := none
+  /-- Miscellaneous notes -/
+  misc : Option String := none
   deriving Repr, Inhabited
+
+/-- Counts of nodes by status -/
+structure StatusCounts where
+  notReady : Nat := 0
+  stated : Nat := 0
+  ready : Nat := 0
+  hasSorry : Nat := 0
+  proven : Nat := 0
+  fullyProven : Nat := 0
+  mathlibReady : Nat := 0
+  inMathlib : Nat := 0
+  total : Nat := 0
+  deriving Repr, Inhabited, ToJson, FromJson
 
 /-- An edge in the dependency graph -/
 structure Edge where
@@ -82,6 +111,22 @@ def Graph.outEdges (g : Graph) (id : String) : Array Edge :=
 /-- Get incoming edges to a node -/
 def Graph.inEdges (g : Graph) (id : String) : Array Edge :=
   g.edges.filter (·.to == id)
+
+/-- Compute status counts for all nodes in the graph -/
+def Graph.computeStatusCounts (g : Graph) : StatusCounts := Id.run do
+  let mut counts : StatusCounts := {}
+  for node in g.nodes do
+    counts := { counts with total := counts.total + 1 }
+    match node.status with
+    | .notReady => counts := { counts with notReady := counts.notReady + 1 }
+    | .stated => counts := { counts with stated := counts.stated + 1 }
+    | .ready => counts := { counts with ready := counts.ready + 1 }
+    | .sorry => counts := { counts with hasSorry := counts.hasSorry + 1 }
+    | .proven => counts := { counts with proven := counts.proven + 1 }
+    | .fullyProven => counts := { counts with fullyProven := counts.fullyProven + 1 }
+    | .mathlibReady => counts := { counts with mathlibReady := counts.mathlibReady + 1 }
+    | .inMathlib => counts := { counts with inMathlib := counts.inMathlib + 1 }
+  return counts
 
 /-- Compute transitive reduction of the graph -/
 def Graph.transitiveReduction (g : Graph) : Graph := Id.run do

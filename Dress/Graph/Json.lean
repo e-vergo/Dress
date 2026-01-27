@@ -55,7 +55,14 @@ instance : ToJson Node where
     ("envType", Json.str n.envType),
     ("status", toJson n.status),
     ("url", Json.str n.url),
-    ("leanDecls", Json.arr (n.leanDecls.map (Json.str ∘ toString)))
+    ("leanDecls", Json.arr (n.leanDecls.map (Json.str ∘ toString))),
+    ("keyTheorem", toJson n.keyTheorem),
+    ("message", toJson n.message),
+    ("priority", toJson n.priority),
+    ("blocked", toJson n.blocked),
+    ("potentialIssue", toJson n.potentialIssue),
+    ("technicalDebt", toJson n.technicalDebt),
+    ("misc", toJson n.misc)
   ]
 
 /-- JSON instance for Edge -/
@@ -83,6 +90,13 @@ instance : ToJson LayoutNode where
     ("status", toJson ln.node.status),
     ("url", Json.str ln.node.url),
     ("leanDecls", Json.arr (ln.node.leanDecls.map (Json.str ∘ toString))),
+    ("keyTheorem", toJson ln.node.keyTheorem),
+    ("message", toJson ln.node.message),
+    ("priority", toJson ln.node.priority),
+    ("blocked", toJson ln.node.blocked),
+    ("potentialIssue", toJson ln.node.potentialIssue),
+    ("technicalDebt", toJson ln.node.technicalDebt),
+    ("misc", toJson ln.node.misc),
     ("x", toJson ln.x),
     ("y", toJson ln.y),
     ("width", toJson ln.width),

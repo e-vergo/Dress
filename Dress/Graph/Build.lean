@@ -135,6 +135,14 @@ def processNode (dressNode : Dress.NodeWithPos) (hasSorry : Bool) : BuilderM Uni
     url := "#" ++ label
     leanDecls := #[node.name]
     isManuallyTagged := isManual
+    -- Propagate metadata fields from Architect.Node
+    keyTheorem := node.keyTheorem
+    message := node.message
+    priority := node.priority
+    blocked := node.blocked
+    potentialIssue := node.potentialIssue
+    technicalDebt := node.technicalDebt
+    misc := node.misc
   }
   addNode graphNode
 

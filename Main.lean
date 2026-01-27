@@ -14,6 +14,88 @@ It also generates dependency graph visualizations (SVG and JSON).
 
 open Lean Cli Dress
 
+/-- Build enhanced manifest JSON with stats, key theorems, messages, and project notes.
+    This provides all the dashboard metadata in a single file. -/
+def buildEnhancedManifest (graph : Graph.Graph) : Json :=
+  -- Compute status counts
+  let stats := graph.computeStatusCounts
+
+  -- Extract key theorems
+  let keyTheorems := graph.nodes.filter (·.keyTheorem) |>.map (·.id)
+
+  -- Extract nodes with messages
+  let messages := graph.nodes.filterMap fun node =>
+    node.message.map fun msg =>
+      Json.mkObj [
+        ("id", Json.str node.id),
+        ("label", Json.str node.label),
+        ("message", Json.str msg)
+      ]
+
+  -- Extract priority items
+  let priorityItems := graph.nodes.filterMap fun node =>
+    node.priority.map fun p =>
+      Json.mkObj [
+        ("id", Json.str node.id),
+        ("label", Json.str node.label),
+        ("priority", toJson p)
+      ]
+
+  -- Extract blocked items
+  let blockedItems := graph.nodes.filterMap fun node =>
+    node.blocked.map fun reason =>
+      Json.mkObj [
+        ("id", Json.str node.id),
+        ("label", Json.str node.label),
+        ("reason", Json.str reason)
+      ]
+
+  -- Extract potential issues
+  let potentialIssues := graph.nodes.filterMap fun node =>
+    node.potentialIssue.map fun issue =>
+      Json.mkObj [
+        ("id", Json.str node.id),
+        ("label", Json.str node.label),
+        ("issue", Json.str issue)
+      ]
+
+  -- Extract technical debt
+  let technicalDebt := graph.nodes.filterMap fun node =>
+    node.technicalDebt.map fun debt =>
+      Json.mkObj [
+        ("id", Json.str node.id),
+        ("label", Json.str node.label),
+        ("debt", Json.str debt)
+      ]
+
+  -- Extract misc notes
+  let miscItems := graph.nodes.filterMap fun node =>
+    node.misc.map fun note =>
+      Json.mkObj [
+        ("id", Json.str node.id),
+        ("label", Json.str node.label),
+        ("note", Json.str note)
+      ]
+
+  -- Build nodes mapping (id -> url path)
+  let nodeEntries : Array (String × Json) := graph.nodes.map fun node =>
+    (node.id, Json.str node.url)
+  let nodesMapping := Json.mkObj nodeEntries.toList
+
+  Json.mkObj [
+    ("stats", toJson stats),
+    ("keyTheorems", Json.arr (keyTheorems.map Json.str)),
+    ("messages", Json.arr messages),
+    ("projectNotes", Json.mkObj [
+      ("priority", Json.arr priorityItems),
+      ("blocked", Json.arr blockedItems),
+      ("potentialIssues", Json.arr potentialIssues),
+      ("technicalDebt", Json.arr technicalDebt),
+      ("misc", Json.arr miscItems)
+    ]),
+    ("nodes", nodesMapping)
+  ]
+
 def outputBaseDir (buildDir : System.FilePath) : System.FilePath :=
   buildDir / "blueprint"
 
@@ -94,9 +176,15 @@ def runGraphCmd (p : Parsed) : IO UInt32 := do
     let jsonPath := dressedDir / "dep-graph.json"
     Graph.writeJsonFile layoutGraph jsonPath
 
+    -- Write enhanced manifest with stats and dashboard metadata
+    let manifestPath := dressedDir / "manifest.json"
+    let manifestJson := buildEnhancedManifest reducedGraph
+    IO.FS.writeFile manifestPath manifestJson.pretty
+
     IO.println s!"Generated dependency graph:"
     IO.println s!"  SVG: {svgPath}"
     IO.println s!"  JSON: {jsonPath}"
+    IO.println s!"  Manifest: {manifestPath}"
     IO.println s!"  Nodes: {layoutGraph.nodes.size}"
     IO.println s!"  Edges: {layoutGraph.edges.size}"
 
