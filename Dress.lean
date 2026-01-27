@@ -42,3 +42,6 @@ import Dress.Graph.Build
 import Dress.Graph.Layout
 import Dress.Graph.Svg
 import Dress.Graph.Json
+
+-- Render: Unified rendering for side-by-side displays
+import Dress.Render
