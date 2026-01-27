@@ -16,13 +16,13 @@ lean_exe extract_blueprint where
 require LeanArchitect from ".." / "LeanArchitect"
 
 require Cli from git
-  "https://github.com/mhuisi/lean4-cli" @ "v4.27.0-rc1"
+  "https://github.com/mhuisi/lean4-cli" @ "v4.27.0"
 
 require subverso from git
   "https://github.com/e-vergo/subverso.git" @ "tactic-hover-support"
 
 require verso from git
-  "https://github.com/leanprover/verso.git" @ "main"
+  "https://github.com/leanprover/verso.git" @ "9137d01"
 
 /-! ## Path Helpers
 
