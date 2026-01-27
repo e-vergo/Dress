@@ -15,9 +15,9 @@ Core types for dependency graph construction and visualization.
 
 namespace Dress.Graph
 
--- Re-export NodeStatus and Priority from LeanArchitect for visualization
+-- Re-export NodeStatus from LeanArchitect for visualization
 -- This ensures consistency between the blueprint attribute and graph rendering
-export Architect (NodeStatus Priority)
+export Architect (NodeStatus)
 
 /-- Node shape for visualization -/
 inductive NodeShape where
@@ -53,8 +53,8 @@ structure Node where
   keyTheorem : Bool := false
   /-- User message/notes -/
   message : Option String := none
-  /-- Priority level -/
-  priority : Option Priority := none
+  /-- Whether this is a priority item for dashboard display -/
+  priorityItem : Bool := false
   /-- Blocked reason -/
   blocked : Option String := none
   /-- Potential issue description -/

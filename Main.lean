@@ -33,13 +33,11 @@ def buildEnhancedManifest (graph : Graph.Graph) : Json :=
       ]
 
   -- Extract priority items
-  let priorityItems := graph.nodes.filterMap fun node =>
-    node.priority.map fun p =>
-      Json.mkObj [
-        ("id", Json.str node.id),
-        ("label", Json.str node.label),
-        ("priority", toJson p)
-      ]
+  let priorityItems := graph.nodes.filter (·.priorityItem) |>.map fun node =>
+    Json.mkObj [
+      ("id", Json.str node.id),
+      ("label", Json.str node.label)
+    ]
 
   -- Extract blocked items
   let blockedItems := graph.nodes.filterMap fun node =>

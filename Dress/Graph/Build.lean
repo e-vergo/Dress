@@ -138,7 +138,7 @@ def processNode (dressNode : Dress.NodeWithPos) (hasSorry : Bool) : BuilderM Uni
     -- Propagate metadata fields from Architect.Node
     keyTheorem := node.keyTheorem
     message := node.message
-    priority := node.priority
+    priorityItem := node.priorityItem
     blocked := node.blocked
     potentialIssue := node.potentialIssue
     technicalDebt := node.technicalDebt
