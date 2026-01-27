@@ -109,11 +109,41 @@ def renderNode (config : SvgConfig) (node : Layout.LayoutNode) : String :=
   s!"  </a>\n" ++
   s!"</g>\n"
 
+/-- Reverse cubic Bezier points array.
+    For a cubic Bezier with format [start, cp1, cp2, end1, cp3, cp4, end2, ...],
+    reversing means: swap control points order within each segment and reverse segment order.
+    Result: arrow points in original direction while path follows layout routing. -/
+def reverseBezierPoints (points : Array (Float × Float)) : Array (Float × Float) :=
+  if points.size < 4 then
+    -- Simple case: just reverse for line segments
+    points.reverse
+  else
+    -- For cubic Bezier: [start, cp1, cp2, end1, cp3, cp4, end2, ...]
+    -- Reversed: [end_n, cp_n2, cp_n1, end_{n-1}, ..., cp2, cp1, start]
+    -- Basically reverse the whole array, then swap cp1/cp2 pairs
+    let reversed := points.reverse
+    -- The reversed array has format: [end_n, cp_n2, cp_n1, end_{n-1}, ...]
+    -- We need to swap adjacent control point pairs (indices 1-2, 4-5, 7-8, ...)
+    Id.run do
+      let mut result := reversed
+      let mut i := 1
+      while i + 1 < result.size do
+        -- Swap positions i and i+1
+        let tmp := result[i]!
+        result := result.set! i result[i+1]!
+        result := result.set! (i+1) tmp
+        i := i + 3  -- Skip to next pair of control points
+      return result
+
 /-- Generate SVG path for a bezier edge -/
 def renderEdge (config : SvgConfig) (edge : Layout.LayoutEdge) : String :=
   if edge.points.size < 2 then ""
   else Id.run do
-    let (x0, y0) := edge.points[0]!
+    -- For reversed edges (back-edges), reverse the points so the arrow
+    -- points in the original direction (toward the original target)
+    let points := if edge.isReversed then reverseBezierPoints edge.points else edge.points
+
+    let (x0, y0) := points[0]!
     let mut path := s!"M {x0} {y0}"
 
     -- Points format from polylineToBezier: [start, cp1, cp2, end1, cp3, cp4, end2, ...]
@@ -121,25 +151,25 @@ def renderEdge (config : SvgConfig) (edge : Layout.LayoutEdge) : String :=
     -- So valid sizes are: 2 (line), 4 (1 cubic), 7 (2 cubics), 10 (3 cubics), etc.
     -- Pattern: 1 + 3*n points for n cubic segments
 
-    if edge.points.size >= 4 then
+    if points.size >= 4 then
       -- Process cubic Bezier segments
       -- After the start point, consume groups of 3 points (cp1, cp2, endpoint)
       let mut i := 1
-      while i + 2 < edge.points.size do
-        let (cp1x, cp1y) := edge.points[i]!
-        let (cp2x, cp2y) := edge.points[i + 1]!
-        let (ex, ey) := edge.points[i + 2]!
+      while i + 2 < points.size do
+        let (cp1x, cp1y) := points[i]!
+        let (cp2x, cp2y) := points[i + 1]!
+        let (ex, ey) := points[i + 2]!
         path := path ++ s!" C {cp1x} {cp1y}, {cp2x} {cp2y}, {ex} {ey}"
         i := i + 3
       -- Handle any remaining points as line segments (shouldn't happen with well-formed data)
-      while i < edge.points.size do
-        let (x, y) := edge.points[i]!
+      while i < points.size do
+        let (x, y) := points[i]!
         path := path ++ s!" L {x} {y}"
         i := i + 1
     else
       -- Less than 4 points: use line segments
-      for i in [1:edge.points.size] do
-        let (x, y) := edge.points[i]!
+      for i in [1:points.size] do
+        let (x, y) := points[i]!
         path := path ++ s!" L {x} {y}"
 
     -- Add stroke-dasharray for dashed edges (statement dependencies)

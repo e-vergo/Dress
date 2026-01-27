@@ -86,6 +86,8 @@ structure Edge where
   to : String
   /-- Edge style (solid for proof deps, dashed for statement deps) -/
   style : EdgeStyle := .solid
+  /-- Whether this edge was reversed during acyclic transformation (for back-edge handling) -/
+  isReversed : Bool := false
   deriving Repr, Inhabited, BEq
 
 /-- The complete dependency graph -/

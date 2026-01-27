@@ -42,6 +42,8 @@ structure LayoutEdge where
   points : Array (Float × Float)
   /-- Edge style (solid or dashed) -/
   style : EdgeStyle := .solid
+  /-- Whether this edge was reversed during acyclic transformation -/
+  isReversed : Bool := false
   deriving Repr, Inhabited
 
 /-- The complete laid-out graph -/
@@ -569,6 +571,104 @@ def smoothCornersToSvgPath (points : Array Point) : String := Id.run do
       i := i + 1
 
   return path
+
+/-! ## Acyclic Graph Transformation (Back-Edge Handling) -/
+
+/-- Build adjacency list for outgoing edges -/
+def buildAdjacencyList (edges : Array Edge) : Std.HashMap String (Array Edge) := Id.run do
+  let mut adj : Std.HashMap String (Array Edge) := {}
+  for edge in edges do
+    let existing := adj.get? edge.from_ |>.getD #[]
+    adj := adj.insert edge.from_ (existing.push edge)
+  return adj
+
+/-- DFS state for cycle detection -/
+structure DfsState where
+  /-- Nodes that have been fully processed -/
+  visited : Std.HashSet String := {}
+  /-- Nodes currently in the recursion stack (current DFS path) -/
+  recursionStack : Std.HashSet String := {}
+  /-- Back-edges found (edges that create cycles) -/
+  backEdges : Array Edge := #[]
+  deriving Inhabited
+
+/-- DFS visit for cycle detection. Updates state with back-edges found. -/
+partial def dfsVisit (nodeId : String) (adj : Std.HashMap String (Array Edge))
+    (state : DfsState) : DfsState := Id.run do
+  -- If already fully visited, nothing to do
+  if state.visited.contains nodeId then
+    return state
+
+  -- If in recursion stack, we found a cycle (but don't record here - edges record it)
+  if state.recursionStack.contains nodeId then
+    return state
+
+  -- Add to recursion stack
+  let mut s := { state with recursionStack := state.recursionStack.insert nodeId }
+
+  -- Visit all neighbors
+  let neighbors := adj.get? nodeId |>.getD #[]
+  for edge in neighbors do
+    if s.recursionStack.contains edge.to then
+      -- Found a back-edge! This edge creates a cycle
+      s := { s with backEdges := s.backEdges.push edge }
+    else if !s.visited.contains edge.to then
+      -- Recurse to unvisited neighbor
+      s := dfsVisit edge.to adj s
+
+  -- Remove from recursion stack, add to visited
+  s := { s with
+    recursionStack := s.recursionStack.erase nodeId
+    visited := s.visited.insert nodeId
+  }
+  return s
+
+/-- Find all back-edges in the graph using DFS.
+    Back-edges are edges that point from a node to an ancestor in the DFS tree,
+    which indicates a cycle. -/
+def findBackEdges (graph : Graph) : Array Edge := Id.run do
+  let adj := buildAdjacencyList graph.edges
+  let mut state : DfsState := {}
+
+  -- Run DFS from each unvisited node (handles disconnected components)
+  for node in graph.nodes do
+    if !state.visited.contains node.id then
+      state := dfsVisit node.id adj state
+
+  return state.backEdges
+
+/-- Reverse an edge (swap from_ and to, mark as reversed) -/
+def reverseEdge (e : Edge) : Edge :=
+  { e with from_ := e.to, to := e.from_, isReversed := true }
+
+/-- Make graph acyclic by iteratively finding and reversing back-edges.
+    Returns the acyclic graph and the list of edges that were reversed. -/
+partial def makeAcyclic (graph : Graph) : Graph × Array Edge := Id.run do
+  let mut g := graph
+  let mut allReversed : Array Edge := #[]
+  let maxIterations := graph.edges.size + 1  -- Safety bound
+
+  for _ in [0:maxIterations] do
+    let backEdges := findBackEdges g
+    if backEdges.isEmpty then
+      -- No more cycles, we're done
+      return (g, allReversed)
+
+    -- Reverse ONE back-edge at a time (Graphviz approach)
+    -- This is more stable than reversing all at once
+    let edgeToReverse := backEdges[0]!
+    allReversed := allReversed.push edgeToReverse
+
+    -- Replace the edge with its reversed version
+    let newEdges := g.edges.map fun e =>
+      if e.from_ == edgeToReverse.from_ && e.to == edgeToReverse.to then
+        reverseEdge e
+      else
+        e
+    g := { g with edges := newEdges }
+
+  -- Safety: if we didn't converge, return what we have
+  return (g, allReversed)
 
 /-- Layout state -/
 structure LayoutState where
@@ -1262,6 +1362,7 @@ def createLayoutEdges (g : Graph) (config : LayoutConfig) : LayoutM (Array Layou
         to := edge.to
         points := finalPoints
         style := edge.style
+        isReversed := edge.isReversed
       }
     | _ => pure ()
 
@@ -1269,17 +1370,23 @@ def createLayoutEdges (g : Graph) (config : LayoutConfig) : LayoutM (Array Layou
 
 end Algorithm
 
-/-- Perform complete layout of a graph -/
+/-- Perform complete layout of a graph.
+    First makes the graph acyclic by reversing back-edges (Graphviz approach),
+    then performs layered layout, then restores original edge directions for rendering. -/
 def layout (g : Graph) (config : LayoutConfig := {}) : LayoutGraph := Id.run do
+  -- Step 1: Make graph acyclic by reversing back-edges
+  let (acyclicGraph, _reversedEdges) := makeAcyclic g
+
+  -- Step 2: Perform layout on the acyclic graph
   let (_, state) := (do
-    Algorithm.assignLayers g
-    Algorithm.orderLayers g config.barycenterIterations
-    Algorithm.assignCoordinates g config
+    Algorithm.assignLayers acyclicGraph
+    Algorithm.orderLayers acyclicGraph config.barycenterIterations
+    Algorithm.assignCoordinates acyclicGraph config
   ).run {}
 
-  -- Create layout nodes with dynamic widths
+  -- Step 3: Create layout nodes with dynamic widths
   let mut layoutNodes : Array LayoutNode := #[]
-  for node in g.nodes do
+  for node in acyclicGraph.nodes do
     match state.positions.get? node.id with
     | some (x, y) =>
       let width := state.nodeWidths.get? node.id |>.getD (computeNodeWidth config node.label)
@@ -1291,8 +1398,8 @@ def layout (g : Graph) (config : LayoutConfig := {}) : LayoutGraph := Id.run do
       }
     | none => pure ()
 
-  -- Create layout edges
-  let (layoutEdges, _) := Algorithm.createLayoutEdges g config |>.run state
+  -- Step 4: Create layout edges (includes isReversed flag)
+  let (layoutEdges, _) := Algorithm.createLayoutEdges acyclicGraph config |>.run state
 
   -- Calculate dimensions
   let maxX := layoutNodes.foldl (fun acc n => max acc (n.x + n.width)) 0.0
