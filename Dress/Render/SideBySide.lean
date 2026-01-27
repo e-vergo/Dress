@@ -120,7 +120,7 @@ def renderProofToggle (proofHtml : Option String) : String :=
     s!"<div class=\"proof_wrapper proof_inline\">
   <div class=\"proof_heading\">
     <span class=\"proof_caption\">Proof</span>
-    <span class=\"expand-proof\">&#9654;</span>
+    <span class=\"expand-proof\">[show]</span>
   </div>
   <div class=\"proof_content\"><p>{proof}</p></div>
 </div>"
