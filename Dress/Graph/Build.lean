@@ -106,8 +106,9 @@ def getShape (envType : String) : NodeShape :=
   | "theorem" | "lemma" | "proposition" | "corollary" | "example" => .ellipse
   | _ => .ellipse  -- default to ellipse for unknown types
 
-/-- Process a single blueprint node -/
-def processNode (dressNode : Dress.NodeWithPos) (hasSorry : Bool) : BuilderM Unit := do
+/-- Process a single blueprint node with inferred dependencies -/
+def processNode (dressNode : Dress.NodeWithPos) (hasSorry : Bool)
+    (statementUses proofUses : Array String) : BuilderM Unit := do
   let node := dressNode.toNode
   let label := node.latexLabel
   let envType := node.statement.latexEnv
@@ -146,14 +147,13 @@ def processNode (dressNode : Dress.NodeWithPos) (hasSorry : Bool) : BuilderM Uni
   }
   addNode graphNode
 
-  -- Add edges from statement uses (label-based dependencies) - dashed style
-  for dep in node.statement.usesLabels do
+  -- Add edges from inferred statement uses - dashed style
+  for dep in statementUses do
     addEdge dep label .dashed
 
-  -- Add edges from proof uses - solid style
-  if let some proof := node.proof then
-    for dep in proof.usesLabels do
-      addEdge dep label .solid
+  -- Add edges from inferred proof uses - solid style
+  for dep in proofUses do
+    addEdge dep label .solid
 
 /-- Find connected components using BFS -/
 def findComponents (g : Graph) : Array (Array String) := Id.run do
@@ -196,9 +196,17 @@ def ensureConnected (g : Graph) : Graph :=
         newEdges := newEdges.push { from_ := n1, to := n2, style := .dashed }
     return { g with edges := newEdges }
 
-/-- Build graph from an array of Dress nodes with sorry information -/
-def buildGraph (nodesWithSorry : Array (Dress.NodeWithPos × Bool)) : Graph :=
-  let (_, state) := (nodesWithSorry.forM fun (node, hasSorry) => processNode node hasSorry).run {}
+/-- Data for building a graph node: DressNode, hasSorry, statementUses, proofUses -/
+structure NodeBuildData where
+  node : Dress.NodeWithPos
+  hasSorry : Bool
+  statementUses : Array String
+  proofUses : Array String
+
+/-- Build graph from an array of node build data -/
+def buildGraph (nodesData : Array NodeBuildData) : Graph :=
+  let (_, state) := (nodesData.forM fun data =>
+    processNode data.node data.hasSorry data.statementUses data.proofUses).run {}
   -- Filter edges to only include those where both endpoints exist
   let validIds := state.nodes.map (·.id) |>.toList |> Std.HashSet.ofList
   let validEdges := state.edges.filter fun e =>
@@ -209,19 +217,23 @@ def buildGraph (nodesWithSorry : Array (Dress.NodeWithPos × Bool)) : Graph :=
 
 end Builder
 
-/-- Build a dependency graph from Dress blueprint nodes (without sorry info - assumes no sorry) -/
+/-- Build a dependency graph from Dress blueprint nodes (without inferred uses - uses explicit labels only) -/
 def fromNodes (nodes : Array Dress.NodeWithPos) : Graph :=
-  Builder.buildGraph (nodes.map fun n => (n, false))
+  Builder.buildGraph (nodes.map fun n => {
+    node := n,
+    hasSorry := false,
+    statementUses := n.toNode.statement.usesLabels,
+    proofUses := n.toNode.proof.map (·.usesLabels) |>.getD #[]
+  })
 
 /-- Build graph from the environment's blueprint extension -/
 def fromEnvironment (env : Lean.Environment) : Lean.CoreM Graph := do
   let entries := Architect.blueprintExt.getState env |>.toList
-  let nodesWithSorry ← entries.toArray.mapM fun (_, node) => do
+  let nodesData ← entries.toArray.mapM fun (_, node) => do
     let dressNode ← Dress.toDressNodeWithPos node
-    -- Infer uses to detect sorry (leanOk = false means has sorry)
-    let (_, proofUses) ← node.inferUses
-    let hasSorry := !proofUses.leanOk
-    return (dressNode, hasSorry)
-  return Builder.buildGraph nodesWithSorry
+    -- Infer uses from actual Lean code dependencies
+    let (statementUses, proofUses) ← node.inferUses
+    return Builder.NodeBuildData.mk dressNode (!proofUses.leanOk) statementUses.uses proofUses.uses
+  return Builder.buildGraph nodesData
 
 end Dress.Graph
