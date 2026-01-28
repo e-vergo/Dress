@@ -12,8 +12,7 @@ lean_exe extract_blueprint where
   root := `Main
   supportInterpreter := true
 
-require LeanArchitect from git
-  "https://github.com/e-vergo/LeanArchitect.git" @ "f0304c2"
+require LeanArchitect from ".." / "LeanArchitect"
 
 require Cli from git
   "https://github.com/mhuisi/lean4-cli" @ "v4.27.0"

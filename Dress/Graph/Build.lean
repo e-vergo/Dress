@@ -137,7 +137,7 @@ def processNode (dressNode : Dress.NodeWithPos) (hasSorry : Bool)
     leanDecls := #[node.name]
     isManuallyTagged := isManual
     -- Propagate metadata fields from Architect.Node
-    keyTheorem := node.keyTheorem
+    keyDeclaration := node.keyDeclaration
     message := node.message
     priorityItem := node.priorityItem
     blocked := node.blocked

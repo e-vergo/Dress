@@ -49,8 +49,8 @@ structure Node where
   leanDecls : Array Lean.Name
   /-- Whether this node's status was manually set via @[blueprint] attribute -/
   isManuallyTagged : Bool := false
-  /-- Whether this is a key theorem -/
-  keyTheorem : Bool := false
+  /-- Whether this is a key declaration -/
+  keyDeclaration : Bool := false
   /-- User message/notes -/
   message : Option String := none
   /-- Whether this is a priority item for dashboard display -/
