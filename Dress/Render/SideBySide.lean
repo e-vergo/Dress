@@ -60,6 +60,64 @@ def escapeHtml (s : String) : String :=
    |>.replace "\"" "&quot;"
    |>.replace "'" "&#39;"
 
+/-- Convert LaTeX list environments (itemize/enumerate) to HTML lists.
+    This handles cases where docstrings contain LaTeX list syntax that
+    would otherwise confuse MathJax. -/
+def convertLatexLists (s : String) : String := Id.run do
+  let mut result := s
+
+  -- First pass: convert \begin{env} and \end{env}
+  result := result.replace "\\begin{itemize}" "<ul>"
+  result := result.replace "\\end{itemize}" "</ul>"
+  result := result.replace "\\begin{enumerate}" "<ol>"
+  result := result.replace "\\end{enumerate}" "</ol>"
+
+  -- Second pass: convert \item to <li>...</li>
+  -- We need to find each \item and wrap its content until the next \item or closing tag
+  let chars := result.toList
+  let mut output := ""
+  let mut i := 0
+  let mut inList := false
+  let mut inListItem := false
+
+  while i < chars.length do
+    -- Check for <ul> or <ol> start
+    if i + 3 < chars.length &&
+       chars[i]! == '<' && (
+         (chars[i+1]! == 'u' && chars[i+2]! == 'l' && chars[i+3]! == '>') ||
+         (chars[i+1]! == 'o' && chars[i+2]! == 'l' && chars[i+3]! == '>')) then
+      output := output ++ String.mk (chars.drop i |>.take 4)
+      i := i + 4
+      inList := true
+    -- Check for </ul> or </ol> end
+    else if i + 4 < chars.length &&
+            chars[i]! == '<' && chars[i+1]! == '/' && (
+              (chars[i+2]! == 'u' && chars[i+3]! == 'l' && chars[i+4]! == '>') ||
+              (chars[i+2]! == 'o' && chars[i+3]! == 'l' && chars[i+4]! == '>')) then
+      if inListItem then
+        output := output ++ "</li>"
+        inListItem := false
+      output := output ++ String.mk (chars.drop i |>.take 5)
+      i := i + 5
+      inList := false
+    -- Check for \item
+    else if inList && i + 4 < chars.length &&
+            chars[i]! == '\\' && chars[i+1]! == 'i' && chars[i+2]! == 't' &&
+            chars[i+3]! == 'e' && chars[i+4]! == 'm' then
+      if inListItem then
+        output := output ++ "</li>"
+      output := output ++ "<li>"
+      i := i + 5
+      inListItem := true
+      -- Skip optional space/newline after \item
+      while i < chars.length && (chars[i]! == ' ' || chars[i]! == '\n' || chars[i]! == '\r' || chars[i]! == '\t') do
+        i := i + 1
+    else
+      output := output.push chars[i]!
+      i := i + 1
+
+  return output
+
 /-- Convert NodeStatus to a status character for display -/
 def statusChar : NodeStatus → String
   | .notReady => "&#10008;"      -- Heavy ballot X (✗)
@@ -223,10 +281,13 @@ def renderSideBySide (data : SbsData) (variant : SbsVariant) : String :=
   -- Container class varies by variant
   let containerClass := match variant with
     | .blueprint => s!"{envType}_thmwrapper sbs-container theorem-style-{envType}"
-    | .paper _ => s!"paper-theorem paper-{envType} sbs-container"
+    | .paper _ => s!"paper-theorem paper-{envType}"  -- No sbs-container for paper (single column)
 
   let latexCol := renderLatexColumn data variant
-  let leanCol := renderLeanColumn data
+  -- Paper mode: don't show Lean code column
+  let leanCol := match variant with
+    | .blueprint => renderLeanColumn data
+    | .paper _ => ""
 
   s!"<div id=\"{escapeHtml data.id}\" class=\"{containerClass}\">
 {latexCol}
