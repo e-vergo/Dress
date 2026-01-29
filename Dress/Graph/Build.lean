@@ -104,9 +104,8 @@ def getShape (envType : String) : NodeShape :=
   | "theorem" | "lemma" | "proposition" | "corollary" | "example" => .ellipse
   | _ => .ellipse  -- default to ellipse for unknown types
 
-/-- Process a single blueprint node with inferred dependencies -/
-def processNode (dressNode : Dress.NodeWithPos) (hasSorry : Bool)
-    (statementUses proofUses : Array String) : BuilderM Unit := do
+/-- PASS 1: Register a node's label and create the graph node (no edges) -/
+def registerNode (dressNode : Dress.NodeWithPos) (hasSorry : Bool) : BuilderM Unit := do
   let node := dressNode.toNode
   let label := node.latexLabel
   let envType := node.statement.latexEnv
@@ -145,6 +144,12 @@ def processNode (dressNode : Dress.NodeWithPos) (hasSorry : Bool)
   }
   addNode graphNode
 
+/-- PASS 2: Add edges for a node (all labels now registered) -/
+def addNodeEdges (dressNode : Dress.NodeWithPos)
+    (statementUses proofUses : Array String) : BuilderM Unit := do
+  let node := dressNode.toNode
+  let label := node.latexLabel
+
   -- Add edges from inferred statement uses - dashed style
   for dep in statementUses do
     addEdge dep label .dashed
@@ -160,10 +165,16 @@ structure NodeBuildData where
   statementUses : Array String
   proofUses : Array String
 
-/-- Build graph from an array of node build data -/
+/-- Build graph from an array of node build data using two-pass processing.
+    PASS 1: Register all labels and create nodes (so all labels exist)
+    PASS 2: Add all edges (now back-edges work because targets are registered) -/
 def buildGraph (nodesData : Array NodeBuildData) : Graph :=
+  -- PASS 1: Register all labels and create nodes
+  let (_, stateAfterNodes) := (nodesData.forM fun data =>
+    registerNode data.node data.hasSorry).run {}
+  -- PASS 2: Add all edges (now all labels are registered)
   let (_, state) := (nodesData.forM fun data =>
-    processNode data.node data.hasSorry data.statementUses data.proofUses).run {}
+    addNodeEdges data.node data.statementUses data.proofUses).run stateAfterNodes
   -- Filter edges to only include those where both endpoints exist
   let validIds := state.nodes.map (·.id) |>.toList |> Std.HashSet.ofList
   let validEdges := state.edges.filter fun e =>
