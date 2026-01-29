@@ -934,20 +934,31 @@ def orderLayerByNeighbors (g : Graph) (layerNodes : Array (Array String))
 /-- Order nodes within layers using median heuristic with transpose optimization.
     DOT algorithm approach:
     1. Multiple iterations of forward/backward median ordering
-    2. Transpose heuristic after each pass to further reduce crossings -/
+    2. Transpose heuristic after each pass to further reduce crossings
+
+    PERFORMANCE OPTIMIZATION:
+    For large graphs (>100 nodes), reduce iterations and skip transpose passes.
+    The transpose heuristic is O(L × N × swaps) per call, and gets called
+    2× per iteration. For 530 nodes this adds up quickly. -/
 def orderLayers (g : Graph) (iterations : Nat) : LayoutM Unit := do
   let s ← get
   let mut layerNodes := s.layerNodes
 
+  -- OPTIMIZATION: For large graphs, reduce iterations and skip transpose
+  let totalNodes := layerNodes.foldl (fun acc layer => acc + layer.size) 0
+  let isLargeGraph : Bool := totalNodes > 100
+  let effectiveIterations := if isLargeGraph then min iterations 2 else iterations
+
   -- Run multiple iterations alternating forward and backward passes
-  for _iter in [0:iterations] do
+  for _iter in [0:effectiveIterations] do
     -- Forward pass: order each layer by median of previous layer neighbors
     for i in [1:layerNodes.size] do
       let sorted := orderLayerByMedian g layerNodes i (i-1) true
       layerNodes := layerNodes.set! i sorted
 
-    -- Apply transpose heuristic after forward pass
-    layerNodes := transposePass g layerNodes
+    -- Apply transpose heuristic after forward pass (skip for large graphs)
+    if !isLargeGraph then
+      layerNodes := transposePass g layerNodes
 
     -- Backward pass: order each layer by median of next layer neighbors
     if layerNodes.size > 1 then
@@ -955,8 +966,9 @@ def orderLayers (g : Graph) (iterations : Nat) : LayoutM Unit := do
         let sorted := orderLayerByMedian g layerNodes i (i+1) false
         layerNodes := layerNodes.set! i sorted
 
-    -- Apply transpose heuristic after backward pass
-    layerNodes := transposePass g layerNodes
+    -- Apply transpose heuristic after backward pass (skip for large graphs)
+    if !isLargeGraph then
+      layerNodes := transposePass g layerNodes
 
   set { s with layerNodes }
 
@@ -1227,9 +1239,24 @@ def createLayoutEdgesSimple (g : Graph) (config : LayoutConfig) : LayoutM (Array
   return layoutEdges
 
 /-- Create layout edges with obstacle-avoiding spline routing.
-    Uses visibility graph + Dijkstra + Bezier fitting for smooth curves around nodes. -/
+    Uses visibility graph + Dijkstra + Bezier fitting for smooth curves around nodes.
+
+    PERFORMANCE OPTIMIZATION (2024):
+    For large graphs (>100 nodes), skip obstacle avoidance entirely and use simple
+    bezier curves. The visibility graph approach is O(V²) per edge which becomes
+    prohibitive for 500+ node graphs like PNT.
+
+    For smaller graphs, we still use the full visibility graph approach but
+    cache the obstacle vertices (computed once) rather than the full visibility
+    graph (which depends on source/target exclusions). -/
 def createLayoutEdges (g : Graph) (config : LayoutConfig) : LayoutM (Array LayoutEdge) := do
   let s ← get
+
+  -- OPTIMIZATION: For large graphs, skip visibility graph entirely
+  -- The O(V²) visibility graph per edge is too expensive for 500+ nodes
+  if g.nodes.size > 100 then
+    return ← createLayoutEdgesSimple g config
+
   let mut layoutEdges : Array LayoutEdge := #[]
 
   -- Build a lookup from node ID to Graph.Node (for shape info)
@@ -1255,6 +1282,18 @@ def createLayoutEdges (g : Graph) (config : LayoutConfig) : LayoutM (Array Layou
         shape := node.shape
       }
     | none => pure ()
+
+  -- OPTIMIZATION: Pre-compute all obstacle vertices ONCE
+  -- This is the expensive part - collecting vertices for each obstacle
+  let margin : Float := 5.0
+  let obstacleVertices : Array Point := Id.run do
+    let mut verts : Array Point := #[]
+    for obs in obstacles do
+      let obsVerts := match obs.shape with
+        | .box => rectObstacleVertices obs margin
+        | .ellipse => ellipseObstacleVertices obs margin
+      verts := verts ++ obsVerts
+    return verts
 
   -- Route each edge
   for edge in g.edges do
@@ -1295,8 +1334,8 @@ def createLayoutEdges (g : Graph) (config : LayoutConfig) : LayoutM (Array Layou
       let targetObsIdx := nodeIdToObsIdx.get? edge.to
       let excludeIdxs := [sourceObsIdx, targetObsIdx].filterMap id |>.toArray
 
-      -- Build visibility graph with source/target centers and all obstacle corners
-      let vertices := collectVisibilityVertices sourceCenter targetCenter obstacles
+      -- Build visibility vertices: source + cached obstacle vertices + target
+      let vertices : Array Point := #[sourceCenter] ++ obstacleVertices ++ #[targetCenter]
       let visEdges := buildVisibilityGraph vertices obstacles excludeIdxs
 
       -- Source is index 0, target is last index (vertices.size - 1)

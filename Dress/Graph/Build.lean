@@ -47,12 +47,10 @@ def addNode (node : Node) : BuilderM Unit := do
 /-- Add an edge to the graph (if both endpoints exist) -/
 def addEdge (from_ to : String) (style : EdgeStyle := .solid) : BuilderM Unit := do
   let s ← get
-  -- Only add edge if both endpoints will exist
-  if s.labelToId.contains from_ || s.labelToId.contains to then
+  -- Only add edge if BOTH endpoints are known blueprint labels
+  if s.labelToId.contains from_ && s.labelToId.contains to then
     modify fun s => { s with edges := s.edges.push { from_, to, style } }
-  else
-    -- Try to add anyway - edge filtering happens later
-    modify fun s => { s with edges := s.edges.push { from_, to, style } }
+  -- else: silently skip edges with unknown endpoints
 
 /-- Register a label -> node ID mapping -/
 def registerLabel (label nodeId : String) : BuilderM Unit := do
@@ -170,9 +168,19 @@ def buildGraph (nodesData : Array NodeBuildData) : Graph :=
   let validIds := state.nodes.map (·.id) |>.toList |> Std.HashSet.ofList
   let validEdges := state.edges.filter fun e =>
     validIds.contains e.from_ && validIds.contains e.to
+  -- Deduplicate edges (keep first occurrence of each from/to pair)
+  let uniqueEdges := Id.run do
+    let mut seen : Std.HashSet (String × String) := {}
+    let mut result : Array Edge := #[]
+    for e in validEdges do
+      let key := (e.from_, e.to)
+      if !seen.contains key then
+        seen := seen.insert key
+        result := result.push e
+    return result
   -- Return graph without artificial connectivity edges - disconnected components
   -- are now visible and can be detected via findComponents for the Checks feature
-  { nodes := state.nodes, edges := validEdges }
+  { nodes := state.nodes, edges := uniqueEdges }
 
 end Builder
 
