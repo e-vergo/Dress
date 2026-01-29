@@ -68,22 +68,6 @@ def elabDress : CommandElab := fun _stx => do
 def isDressEnabled : IO Bool := do
   dressEnabledRef.get
 
-/-- Export dressed artifacts if dressing is enabled.
-    DEPRECATED: Artifacts are now written per-declaration during elaboration.
-    Lake facet scans the artifacts/ directory directly. -/
-def exportIfDressEnabled : CommandElabM Unit := do
-  -- No-op: artifacts are written per-declaration now
-  return
-
-/-- Export all captured blueprint highlighting for the current module.
-    DEPRECATED: Artifacts are now written per-declaration during elaboration. -/
-syntax (name := exportBlueprintHighlighting) "#export_blueprint_highlighting" : command
-
-@[command_elab exportBlueprintHighlighting]
-def elabExportBlueprintHighlighting : CommandElab := fun _stx => do
-  -- No-op: artifacts are written per-declaration during elaboration
-  return
-
 /-! ## Declaration Interception Helpers -/
 
 /-- Extract declaration name from a declId syntax node. -/
@@ -170,11 +154,11 @@ def elabDeclAndCaptureHighlighting (stx : Syntax) (declId : Syntax) (_mods : Opt
               let writeEnd ← IO.monoMsNow
               let writeTime := writeEnd - writeStart
 
-              -- Calculate and print total timing
+              -- Calculate and print total timing (only when trace option enabled)
               let totalTime := captureTime + writeTime
-              logInfo m!"[DRESS TIMING] captureHighlighting: {captureTime}ms for {resolvedName}"
-              logInfo m!"[DRESS TIMING] writeArtifacts: {writeTime}ms for {resolvedName}"
-              logInfo m!"[DRESS TIMING] TOTAL: {totalTime}ms for {resolvedName}"
+              trace[blueprint.timing] "captureHighlighting: {captureTime}ms for {resolvedName}"
+              trace[blueprint.timing] "writeArtifacts: {writeTime}ms for {resolvedName}"
+              trace[blueprint.timing] "TOTAL: {totalTime}ms for {resolvedName}"
 
               trace[blueprint] "Wrote artifacts for {resolvedName} with label {node.latexLabel}"
             catch e =>
@@ -282,6 +266,5 @@ def withCaptureHookFlag (act : CommandElabM α) : CommandElabM α :=
   Capture.withCaptureHookFlag act
 abbrev elabDeclAndCaptureHighlighting := Capture.elabDeclAndCaptureHighlighting
 abbrev isDressEnabled := Capture.isDressEnabled
-abbrev exportIfDressEnabled := Capture.exportIfDressEnabled
 
 end Dress

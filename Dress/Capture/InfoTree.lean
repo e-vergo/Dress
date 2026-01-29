@@ -115,9 +115,9 @@ def captureHighlighting (declName : Name) (stx : Syntax) : CommandElabM Unit := 
       captureHighlightingFromInfoTrees stx messages trees []
     let subversoEnd ← IO.monoMsNow
 
-    -- Print timing breakdown for captureHighlighting internals
-    logInfo m!"[DRESS TIMING]   msgFilter: {msgFilterEnd - msgFilterStart}ms for {declName}"
-    logInfo m!"[DRESS TIMING]   subversoHighlight: {subversoEnd - subversoStart}ms for {declName}"
+    -- Print timing breakdown for captureHighlighting internals (only when trace option enabled)
+    trace[blueprint.timing] "  msgFilter: {msgFilterEnd - msgFilterStart}ms for {declName}"
+    trace[blueprint.timing] "  subversoHighlight: {subversoEnd - subversoStart}ms for {declName}"
 
     match hl? with
     | some hl =>

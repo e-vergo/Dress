@@ -107,13 +107,13 @@ def writeDeclarationArtifactsFromNode (name : Name) (node : Architect.Node)
   let manifestWriteEnd ← IO.monoMsNow
   trace[blueprint.debug] "Wrote {manifestEntryPath}"
 
-  -- Print sub-operation timing breakdown
-  logInfo m!"[DRESS TIMING]   texGen: {texGenEnd - texGenStart}ms for {name}"
-  logInfo m!"[DRESS TIMING]   texWrite: {texWriteEnd - texWriteStart}ms for {name}"
-  logInfo m!"[DRESS TIMING]   htmlRender: {htmlRenderTime}ms for {name}"
-  logInfo m!"[DRESS TIMING]   htmlWrite: {htmlWriteTime}ms for {name}"
-  logInfo m!"[DRESS TIMING]   jsonWrite: {jsonWriteEnd - jsonWriteStart}ms for {name}"
-  logInfo m!"[DRESS TIMING]   manifestWrite: {manifestWriteEnd - manifestWriteStart}ms for {name}"
+  -- Print sub-operation timing breakdown (only when trace option enabled)
+  trace[blueprint.timing] "  texGen: {texGenEnd - texGenStart}ms for {name}"
+  trace[blueprint.timing] "  texWrite: {texWriteEnd - texWriteStart}ms for {name}"
+  trace[blueprint.timing] "  htmlRender: {htmlRenderTime}ms for {name}"
+  trace[blueprint.timing] "  htmlWrite: {htmlWriteTime}ms for {name}"
+  trace[blueprint.timing] "  jsonWrite: {jsonWriteEnd - jsonWriteStart}ms for {name}"
+  trace[blueprint.timing] "  manifestWrite: {manifestWriteEnd - manifestWriteStart}ms for {name}"
 
 end Dress.Generate
 

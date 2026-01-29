@@ -86,7 +86,7 @@ def convertLatexLists (s : String) : String := Id.run do
        chars[i]! == '<' && (
          (chars[i+1]! == 'u' && chars[i+2]! == 'l' && chars[i+3]! == '>') ||
          (chars[i+1]! == 'o' && chars[i+2]! == 'l' && chars[i+3]! == '>')) then
-      output := output ++ String.mk (chars.drop i |>.take 4)
+      output := output ++ String.ofList (chars.drop i |>.take 4)
       i := i + 4
       inList := true
     -- Check for </ul> or </ol> end
@@ -97,7 +97,7 @@ def convertLatexLists (s : String) : String := Id.run do
       if inListItem then
         output := output ++ "</li>"
         inListItem := false
-      output := output ++ String.mk (chars.drop i |>.take 5)
+      output := output ++ String.ofList (chars.drop i |>.take 5)
       i := i + 5
       inList := false
     -- Check for \item
