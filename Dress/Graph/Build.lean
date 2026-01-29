@@ -124,6 +124,12 @@ def registerNode (dressNode : Dress.NodeWithPos) (hasSorry : Bool) : BuilderM Un
   let displayLabel := match node.title with
     | some name => name
     | none => node.name.toString  -- Full qualified name like "SBSTest.Chapter2.square_nonneg"
+
+  -- Extract module name from location if available
+  let moduleName := match dressNode.location with
+    | some loc => loc.module
+    | none => .anonymous
+
   let graphNode : Node := {
     id := label
     label := displayLabel
@@ -132,6 +138,7 @@ def registerNode (dressNode : Dress.NodeWithPos) (hasSorry : Bool) : BuilderM Un
     shape := getShape envType
     url := "#" ++ label
     leanDecls := #[node.name]
+    moduleName := moduleName
     isManuallyTagged := isManual
     -- Propagate metadata fields from Architect.Node
     keyDeclaration := node.keyDeclaration

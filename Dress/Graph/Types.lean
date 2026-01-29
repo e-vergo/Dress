@@ -47,6 +47,8 @@ structure Node where
   url : String
   /-- Associated Lean declaration names -/
   leanDecls : Array Lean.Name
+  /-- Source module name (e.g., `PrimeNumberTheoremAnd.Wiener`) -/
+  moduleName : Lean.Name := .anonymous
   /-- Whether this node's status was manually set via @[blueprint] attribute -/
   isManuallyTagged : Bool := false
   /-- Whether this is a key declaration -/
