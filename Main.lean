@@ -14,11 +14,14 @@ It also generates dependency graph visualizations (SVG and JSON).
 
 open Lean Cli Dress
 
-/-- Build enhanced manifest JSON with stats, key declarations, messages, and project notes.
+/-- Build enhanced manifest JSON with stats, key declarations, messages, project notes, and checks.
     This provides all the dashboard metadata in a single file. -/
 def buildEnhancedManifest (graph : Graph.Graph) : Json :=
   -- Compute status counts
   let stats := graph.computeStatusCounts
+
+  -- Compute check results (connectivity, cycles)
+  let checks := Graph.computeCheckResults graph
 
   -- Extract key declarations
   let keyDeclarations := graph.nodes.filter (·.keyDeclaration) |>.map (·.id)
@@ -91,7 +94,8 @@ def buildEnhancedManifest (graph : Graph.Graph) : Json :=
       ("technicalDebt", Json.arr technicalDebt),
       ("misc", Json.arr miscItems)
     ]),
-    ("nodes", nodesMapping)
+    ("nodes", nodesMapping),
+    ("checks", toJson checks)
   ]
 
 def outputBaseDir (buildDir : System.FilePath) : System.FilePath :=

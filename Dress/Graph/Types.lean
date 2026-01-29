@@ -130,6 +130,18 @@ def Graph.computeStatusCounts (g : Graph) : StatusCounts := Id.run do
     | .inMathlib => counts := { counts with inMathlib := counts.inMathlib + 1 }
   return counts
 
+/-- Results of graph validation checks -/
+structure CheckResults where
+  /-- Whether the graph is fully connected (single component) -/
+  isConnected : Bool
+  /-- Number of connected components -/
+  numComponents : Nat
+  /-- Size of each connected component -/
+  componentSizes : Array Nat
+  /-- Detected cycles in the graph (each cycle = array of node IDs) -/
+  cycles : Array (Array String)
+  deriving Repr, Inhabited, ToJson, FromJson
+
 /-- Compute transitive reduction of the graph -/
 def Graph.transitiveReduction (g : Graph) : Graph := Id.run do
   -- Build adjacency sets for reachability

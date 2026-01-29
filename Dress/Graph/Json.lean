@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 -/
 import Batteries.Lean.Json
 import Dress.Graph.Layout
+import Dress.Graph.Types
 
 /-!
 # JSON Serialization for Dependency Graphs
@@ -77,6 +78,15 @@ instance : ToJson Graph where
   toJson g := Json.mkObj [
     ("nodes", Json.arr (g.nodes.map toJson)),
     ("edges", Json.arr (g.edges.map toJson))
+  ]
+
+/-- JSON instance for CheckResults -/
+instance : ToJson CheckResults where
+  toJson c := Json.mkObj [
+    ("isConnected", .bool c.isConnected),
+    ("numComponents", .num c.numComponents),
+    ("componentSizes", toJson c.componentSizes),
+    ("cycles", toJson c.cycles)
   ]
 
 namespace Layout

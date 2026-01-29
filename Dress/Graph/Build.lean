@@ -155,6 +155,27 @@ def processNode (dressNode : Dress.NodeWithPos) (hasSorry : Bool)
   for dep in proofUses do
     addEdge dep label .solid
 
+/-- Data for building a graph node: DressNode, hasSorry, statementUses, proofUses -/
+structure NodeBuildData where
+  node : Dress.NodeWithPos
+  hasSorry : Bool
+  statementUses : Array String
+  proofUses : Array String
+
+/-- Build graph from an array of node build data -/
+def buildGraph (nodesData : Array NodeBuildData) : Graph :=
+  let (_, state) := (nodesData.forM fun data =>
+    processNode data.node data.hasSorry data.statementUses data.proofUses).run {}
+  -- Filter edges to only include those where both endpoints exist
+  let validIds := state.nodes.map (·.id) |>.toList |> Std.HashSet.ofList
+  let validEdges := state.edges.filter fun e =>
+    validIds.contains e.from_ && validIds.contains e.to
+  -- Return graph without artificial connectivity edges - disconnected components
+  -- are now visible and can be detected via findComponents for the Checks feature
+  { nodes := state.nodes, edges := validEdges }
+
+end Builder
+
 /-- Find connected components using BFS -/
 def findComponents (g : Graph) : Array (Array String) := Id.run do
   let mut visited : Std.HashSet String := {}
@@ -181,41 +202,82 @@ def findComponents (g : Graph) : Array (Array String) := Id.run do
       components := components.push component
   return components
 
-/-- Ensure graph is connected by adding dashed edges between components -/
-def ensureConnected (g : Graph) : Graph :=
+-- NOTE: ensureConnected was removed to avoid silently adding artificial edges
+-- that hide potential issues in the formalization. The graph now reflects true
+-- connectivity. Use findComponents above for detecting disconnected components
+-- (will be used for the Checks feature).
+
+/-- Detect cycles in the graph using DFS.
+    Returns array of cycles, where each cycle is an array of node IDs.
+    Uses standard DFS with coloring: white (unvisited), gray (in stack), black (finished).
+    When a gray node is reached from another gray node, a cycle is found. -/
+def detectCycles (g : Graph) : Array (Array String) := Id.run do
+  -- Color states: 0 = white (unvisited), 1 = gray (in current path), 2 = black (finished)
+  let mut color : Std.HashMap String Nat := {}
+  let mut parent : Std.HashMap String String := {}
+  let mut cycles : Array (Array String) := #[]
+
+  -- Initialize all nodes as white
+  for node in g.nodes do
+    color := color.insert node.id 0
+
+  -- Build adjacency list for outgoing edges
+  let mut adjList : Std.HashMap String (Array String) := {}
+  for node in g.nodes do
+    adjList := adjList.insert node.id #[]
+  for edge in g.edges do
+    match adjList.get? edge.from_ with
+    | some neighbors => adjList := adjList.insert edge.from_ (neighbors.push edge.to)
+    | none => pure ()
+
+  -- DFS from each unvisited node
+  for startNode in g.nodes do
+    if (color.get? startNode.id |>.getD 0) == 0 then
+      -- Stack contains (nodeId, neighborIndex)
+      let mut stack : Array (String × Nat) := #[(startNode.id, 0)]
+      color := color.insert startNode.id 1  -- Mark as gray
+
+      while h : stack.size > 0 do
+        let (curr, idx) := stack[stack.size - 1]'(by omega)
+        let neighbors := adjList.get? curr |>.getD #[]
+
+        if idx < neighbors.size then
+          -- Update the index for current node
+          stack := stack.set! (stack.size - 1) (curr, idx + 1)
+          let neighbor := neighbors[idx]!
+
+          match color.get? neighbor |>.getD 0 with
+          | 0 => -- White: unvisited, push to stack
+            parent := parent.insert neighbor curr
+            color := color.insert neighbor 1  -- Mark as gray
+            stack := stack.push (neighbor, 0)
+          | 1 => -- Gray: back edge found, we have a cycle
+            -- Reconstruct the cycle
+            let mut cycle : Array String := #[neighbor]
+            let mut node := curr
+            -- Walk back through the stack until we reach the neighbor
+            while node != neighbor do
+              cycle := cycle.push node
+              match parent.get? node with
+              | some p => node := p
+              | none => break  -- Safety: shouldn't happen
+            cycle := cycle.push neighbor  -- Complete the cycle
+            cycles := cycles.push cycle.reverse
+          | _ => -- Black: already fully processed, skip
+            pure ()
+        else
+          -- Done with all neighbors, mark as black and pop
+          color := color.insert curr 2
+          stack := stack.pop
+
+  return cycles
+
+/-- Compute check results for a graph -/
+def computeCheckResults (g : Graph) : CheckResults :=
   let components := findComponents g
-  if components.size <= 1 then g
-  else Id.run do
-    -- Connect each component to the next with an artificial edge
-    let mut newEdges := g.edges
-    for i in [0:components.size - 1] do
-      let comp1 := components[i]!
-      let comp2 := components[i + 1]!
-      -- Connect first node of each component
-      if let (some n1, some n2) := (comp1[0]?, comp2[0]?) then
-        newEdges := newEdges.push { from_ := n1, to := n2, style := .dashed }
-    return { g with edges := newEdges }
-
-/-- Data for building a graph node: DressNode, hasSorry, statementUses, proofUses -/
-structure NodeBuildData where
-  node : Dress.NodeWithPos
-  hasSorry : Bool
-  statementUses : Array String
-  proofUses : Array String
-
-/-- Build graph from an array of node build data -/
-def buildGraph (nodesData : Array NodeBuildData) : Graph :=
-  let (_, state) := (nodesData.forM fun data =>
-    processNode data.node data.hasSorry data.statementUses data.proofUses).run {}
-  -- Filter edges to only include those where both endpoints exist
-  let validIds := state.nodes.map (·.id) |>.toList |> Std.HashSet.ofList
-  let validEdges := state.edges.filter fun e =>
-    validIds.contains e.from_ && validIds.contains e.to
-  -- Ensure graph is connected: add artificial edges between disconnected components
-  let connectedGraph := ensureConnected { nodes := state.nodes, edges := validEdges }
-  connectedGraph
-
-end Builder
+  let componentSizes := components.map (·.size)
+  let cycles := detectCycles g
+  ⟨components.size <= 1, components.size, componentSizes, cycles⟩
 
 /-- Build a dependency graph from Dress blueprint nodes (without inferred uses - uses explicit labels only) -/
 def fromNodes (nodes : Array Dress.NodeWithPos) : Graph :=
