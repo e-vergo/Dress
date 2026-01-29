@@ -24,9 +24,6 @@ Dress sits in the middle of the Side-by-Side Blueprint toolchain:
 ```
 LeanArchitect          Dress                   Runway
 (metadata)      -->   (artifacts)      -->   (site generation)
-                          |
-                     manifest.json
-                     (precomputed stats)
 ```
 
 - **LeanArchitect**: Provides the `@[blueprint]` attribute with 7 metadata options
