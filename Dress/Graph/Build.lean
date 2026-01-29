@@ -123,8 +123,8 @@ def processNode (dressNode : Dress.NodeWithPos) (hasSorry : Bool)
     | .notReady | .ready | .mathlibReady | .inMathlib => true
     | _ => false
 
-  -- Priority: displayName > full qualified Lean name
-  let displayLabel := match node.displayName with
+  -- Priority: title > full qualified Lean name
+  let displayLabel := match node.title with
     | some name => name
     | none => node.name.toString  -- Full qualified name like "SBSTest.Chapter2.square_nonneg"
   let graphNode : Node := {
