@@ -142,8 +142,13 @@ structure CheckResults where
   cycles : Array (Array String)
   deriving Repr, Inhabited, ToJson, FromJson
 
-/-- Compute transitive reduction of the graph -/
+/-- Compute transitive reduction of the graph.
+    Note: Uses Floyd-Warshall which is O(n³). Skip for large graphs (>100 nodes). -/
 def Graph.transitiveReduction (g : Graph) : Graph := Id.run do
+  -- Skip for large graphs - Floyd-Warshall is O(n³), too slow for 500+ nodes
+  if g.nodes.size > 100 then
+    return g
+
   -- Build adjacency sets for reachability
   let mut reachable : Std.HashMap String (Std.HashSet String) := {}
   for node in g.nodes do
