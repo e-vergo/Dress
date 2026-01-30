@@ -68,7 +68,9 @@ def writeDeclarationArtifactsFromNode (name : Name) (node : Architect.Node)
   let (htmlRenderTime, htmlWriteTime) ← if let some hl := highlighting then
     -- Time: Render HTML with hovers
     let renderStart ← IO.monoMsNow
-    let (htmlContent, hoverJson) := HtmlRender.renderHighlightedWithHovers hl
+    let (rawHtml, hoverJson) := HtmlRender.renderHighlightedWithHovers hl
+    -- Apply rainbow bracket highlighting
+    let htmlContent := HtmlRender.wrapBracketsWithDepth rawHtml
     let renderEnd ← IO.monoMsNow
 
     -- Time: Write HTML and hovers
