@@ -78,24 +78,6 @@ def statusToDisplayString : NodeStatus → String
   | .fullyProven => "Fully Proven"
   | .mathlibReady => "Mathlib Ready"
 
-/-- Convert NodeStatus to a badge class for paper variant (6 statuses) -/
-def statusToBadgeClass : NodeStatus → String
-  | .notReady => "not-started"
-  | .ready => "not-started"
-  | .sorry => "in-progress"
-  | .proven => "in-progress"
-  | .fullyProven => "verified"
-  | .mathlibReady => "verified"
-
-/-- Convert NodeStatus to display text for badge (6 statuses) -/
-def statusToBadgeText : NodeStatus → String
-  | .notReady => "Not Ready"
-  | .ready => "Ready"
-  | .sorry => "Has Sorry"
-  | .proven => "Proven"
-  | .fullyProven => "Verified"
-  | .mathlibReady => "Mathlib Ready"
-
 /-- Convert NodeStatus to CSS class for status indicator (6 statuses) -/
 def statusToCssClass : NodeStatus → String
   | .notReady => "status-not-ready"
@@ -185,19 +167,18 @@ def renderLatexColumnBlueprint (data : SbsData) : String :=
 def renderLatexColumnPaper (data : SbsData) (blueprintUrl : Option String) : String :=
   let envType := data.envType
   let displayLabel := data.displayNumber.getD data.label
-  let badgeClass := statusToBadgeClass data.status
-  let badgeText := statusToBadgeText data.status
   let statusColor := statusToColor data.status
+  let statusTitle := statusToDisplayString data.status
 
   -- Blueprint link if URL provided
   let blueprintLink := match blueprintUrl with
     | some url => s!" <a class=\"blueprint-link\" href=\"{escapeHtml url}\">[blueprint]</a>"
     | none => ""
 
-  -- Paper-style heading with verification badge (status dot + text)
+  -- Paper-style heading with status dot (no badge wrapper, just dot + link)
   let heading := s!"<div class=\"paper-theorem-header\">
   <span class=\"paper-theorem-type\">{capitalize envType} {displayLabel}</span>
-  <span class=\"verification-badge {badgeClass}\"><span class=\"status-dot paper-status-dot\" style=\"background:{statusColor}\"></span> {badgeText}</span>{blueprintLink}
+  <span class=\"status-dot paper-status-dot\" style=\"background:{statusColor}\" title=\"Status: {statusTitle}\"></span>{blueprintLink}
 </div>"
 
   -- Statement content (reuses same class for consistency)
