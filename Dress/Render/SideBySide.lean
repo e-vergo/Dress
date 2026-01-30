@@ -127,6 +127,24 @@ def statusChar : NodeStatus → String
   | .fullyProven => "&#10003;"   -- Check mark (✓)
   | .mathlibReady => "&#10004;"  -- Heavy check mark (✔)
 
+/-- Convert NodeStatus to color hex code -/
+def statusToColor : NodeStatus → String
+  | .notReady => "#F4A460"       -- Sandy Brown
+  | .ready => "#20B2AA"          -- Light Sea Green
+  | .sorry => "#8B0000"          -- Dark Red
+  | .proven => "#90EE90"         -- Light Green
+  | .fullyProven => "#228B22"    -- Forest Green
+  | .mathlibReady => "#87CEEB"   -- Light Blue
+
+/-- Convert NodeStatus to display string -/
+def statusToDisplayString : NodeStatus → String
+  | .notReady => "Not Ready"
+  | .ready => "Ready"
+  | .sorry => "Has Sorry"
+  | .proven => "Proven"
+  | .fullyProven => "Fully Proven"
+  | .mathlibReady => "Mathlib Ready"
+
 /-- Convert NodeStatus to a badge class for paper variant (6 statuses) -/
 def statusToBadgeClass : NodeStatus → String
   | .notReady => "not-started"
@@ -209,12 +227,14 @@ def renderLatexColumnBlueprint (data : SbsData) : String :=
   let envType := data.envType
   let displayLabel := data.displayNumber.getD data.label
   let statusIndicator := statusChar data.status
+  let statusColor := statusToColor data.status
+  let statusTitle := statusToDisplayString data.status
 
-  -- Heading with status character
+  -- Heading with status dot and status character
   let heading := s!"<div class=\"{envType}_thmheading\">
   <span class=\"{envType}_thmcaption\">{capitalize envType}</span>
   <span class=\"{envType}_thmlabel\">{displayLabel}</span>
-  <div class=\"thm_header_extras {statusToCssClass data.status}\">{statusIndicator}</div>
+  <div class=\"thm_header_extras {statusToCssClass data.status}\"><span class=\"status-dot header-status-dot\" style=\"background:{statusColor}\" title=\"Status: {statusTitle}\"></span>{statusIndicator}</div>
 </div>"
 
   -- Statement content
