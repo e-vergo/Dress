@@ -118,49 +118,41 @@ def convertLatexLists (s : String) : String := Id.run do
 
   return output
 
-/-- Convert NodeStatus to a status character for display -/
+/-- Convert NodeStatus to a status character for display (6 statuses) -/
 def statusChar : NodeStatus → String
   | .notReady => "&#10008;"      -- Heavy ballot X (✗)
-  | .stated => "&#9675;"         -- White circle (○)
   | .ready => "&#9673;"          -- Fisheye / circled dot (◉)
   | .sorry => "&#9888;"          -- Warning sign (⚠)
   | .proven => "&#9680;"         -- Circle with left half black (◐)
   | .fullyProven => "&#10003;"   -- Check mark (✓)
   | .mathlibReady => "&#10004;"  -- Heavy check mark (✔)
-  | .inMathlib => "&#9733;"      -- Black star (★)
 
-/-- Convert NodeStatus to a badge class for paper variant -/
+/-- Convert NodeStatus to a badge class for paper variant (6 statuses) -/
 def statusToBadgeClass : NodeStatus → String
   | .notReady => "not-started"
-  | .stated => "not-started"
   | .ready => "not-started"
   | .sorry => "in-progress"
   | .proven => "in-progress"
   | .fullyProven => "verified"
   | .mathlibReady => "verified"
-  | .inMathlib => "verified"
 
-/-- Convert NodeStatus to display text for badge -/
+/-- Convert NodeStatus to display text for badge (6 statuses) -/
 def statusToBadgeText : NodeStatus → String
   | .notReady => "Not Ready"
-  | .stated => "Stated"
   | .ready => "Ready"
   | .sorry => "Has Sorry"
   | .proven => "Proven"
   | .fullyProven => "Verified"
   | .mathlibReady => "Mathlib Ready"
-  | .inMathlib => "In Mathlib"
 
-/-- Convert NodeStatus to CSS class for status indicator -/
+/-- Convert NodeStatus to CSS class for status indicator (6 statuses) -/
 def statusToCssClass : NodeStatus → String
   | .notReady => "status-not-ready"
-  | .stated => "status-stated"
   | .ready => "status-ready"
   | .sorry => "status-sorry"
   | .proven => "status-proven"
   | .fullyProven => "status-fully-proven"
   | .mathlibReady => "status-mathlib-ready"
-  | .inMathlib => "status-in-mathlib"
 
 /-- Capitalize the first letter of a string -/
 def capitalize (s : String) : String :=

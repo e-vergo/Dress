@@ -100,10 +100,10 @@ def registerNode (dressNode : Dress.NodeWithPos) (hasSorry : Bool) : BuilderM Un
   registerLabel label label
 
   -- Determine if this is a manually tagged status
-  -- Manual statuses are: notReady, ready, mathlibReady, inMathlib
-  -- Derived statuses are: stated, sorry, proven, fullyProven
+  -- Manual statuses are: notReady, ready, mathlibReady
+  -- Derived statuses are: sorry, proven, fullyProven
   let isManual := match node.status with
-    | .notReady | .ready | .mathlibReady | .inMathlib => true
+    | .notReady | .ready | .mathlibReady => true
     | _ => false
 
   -- Priority: title > full qualified Lean name
