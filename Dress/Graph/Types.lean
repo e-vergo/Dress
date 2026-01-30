@@ -121,13 +121,11 @@ def Graph.computeStatusCounts (g : Graph) : StatusCounts := Id.run do
     counts := { counts with total := counts.total + 1 }
     match node.status with
     | .notReady => counts := { counts with notReady := counts.notReady + 1 }
-    | .stated => counts := { counts with ready := counts.ready + 1 }  -- deprecated: count as ready
     | .ready => counts := { counts with ready := counts.ready + 1 }
     | .sorry => counts := { counts with hasSorry := counts.hasSorry + 1 }
     | .proven => counts := { counts with proven := counts.proven + 1 }
     | .fullyProven => counts := { counts with fullyProven := counts.fullyProven + 1 }
     | .mathlibReady => counts := { counts with mathlibReady := counts.mathlibReady + 1 }
-    | .inMathlib => counts := { counts with mathlibReady := counts.mathlibReady + 1 }  -- deprecated: count as mathlibReady
   return counts
 
 /-- Results of graph validation checks -/
