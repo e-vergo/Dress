@@ -118,15 +118,6 @@ def convertLatexLists (s : String) : String := Id.run do
 
   return output
 
-/-- Convert NodeStatus to a status character for display (6 statuses) -/
-def statusChar : NodeStatus → String
-  | .notReady => "&#10008;"      -- Heavy ballot X (✗)
-  | .ready => "&#9673;"          -- Fisheye / circled dot (◉)
-  | .sorry => "&#9888;"          -- Warning sign (⚠)
-  | .proven => "&#9680;"         -- Circle with left half black (◐)
-  | .fullyProven => "&#10003;"   -- Check mark (✓)
-  | .mathlibReady => "&#10004;"  -- Heavy check mark (✔)
-
 /-- Convert NodeStatus to color hex code -/
 def statusToColor : NodeStatus → String
   | .notReady => "#F4A460"       -- Sandy Brown
@@ -226,15 +217,14 @@ def renderLeanColumn (data : SbsData) : String :=
 def renderLatexColumnBlueprint (data : SbsData) : String :=
   let envType := data.envType
   let displayLabel := data.displayNumber.getD data.label
-  let statusIndicator := statusChar data.status
   let statusColor := statusToColor data.status
   let statusTitle := statusToDisplayString data.status
 
-  -- Heading with status dot and status character
+  -- Heading with status dot (color indicates status)
   let heading := s!"<div class=\"{envType}_thmheading\">
   <span class=\"{envType}_thmcaption\">{capitalize envType}</span>
   <span class=\"{envType}_thmlabel\">{displayLabel}</span>
-  <div class=\"thm_header_extras {statusToCssClass data.status}\"><span class=\"status-dot header-status-dot\" style=\"background:{statusColor}\" title=\"Status: {statusTitle}\"></span>{statusIndicator}</div>
+  <div class=\"thm_header_extras {statusToCssClass data.status}\"><span class=\"status-dot header-status-dot\" style=\"background:{statusColor}\" title=\"Status: {statusTitle}\"></span></div>
 </div>"
 
   -- Statement content
@@ -255,17 +245,17 @@ def renderLatexColumnPaper (data : SbsData) (blueprintUrl : Option String) : Str
   let displayLabel := data.displayNumber.getD data.label
   let badgeClass := statusToBadgeClass data.status
   let badgeText := statusToBadgeText data.status
-  let badgeChar := statusChar data.status
+  let statusColor := statusToColor data.status
 
   -- Blueprint link if URL provided
   let blueprintLink := match blueprintUrl with
     | some url => s!" <a class=\"blueprint-link\" href=\"{escapeHtml url}\">[blueprint]</a>"
     | none => ""
 
-  -- Paper-style heading with verification badge
+  -- Paper-style heading with verification badge (status dot + text)
   let heading := s!"<div class=\"paper-theorem-header\">
   <span class=\"paper-theorem-type\">{capitalize envType} {displayLabel}</span>
-  <span class=\"verification-badge {badgeClass}\">{badgeChar} {badgeText}</span>{blueprintLink}
+  <span class=\"verification-badge {badgeClass}\"><span class=\"status-dot paper-status-dot\" style=\"background:{statusColor}\"></span> {badgeText}</span>{blueprintLink}
 </div>"
 
   -- Statement content (reuses same class for consistency)
