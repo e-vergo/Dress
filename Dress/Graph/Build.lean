@@ -166,13 +166,14 @@ structure NodeBuildData where
 -/
 def computeFullyProven (g : Graph) : Graph := Id.run do
   -- Build dependency map: nodeId -> [dependency nodeIds]
+  -- Edge semantics: (from_=A, to=B) means B depends on A (B uses A)
   let mut deps : Std.HashMap String (Array String) := {}
   for node in g.nodes do
     deps := deps.insert node.id #[]
   for edge in g.edges do
-    -- edge.from_ depends on edge.to
-    match deps.get? edge.from_ with
-    | some arr => deps := deps.insert edge.from_ (arr.push edge.to)
+    -- edge.to depends on edge.from_ (edge.to uses edge.from_)
+    match deps.get? edge.to with
+    | some arr => deps := deps.insert edge.to (arr.push edge.from_)
     | none => pure ()
 
   -- Build node lookup
