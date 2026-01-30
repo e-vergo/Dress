@@ -59,14 +59,14 @@ def registerLabel (label nodeId : String) : BuilderM Unit := do
 /-- Determine node status from Architect.Node.
     This computes the final visualization status based on:
     1. Manual status from @[blueprint] attribute
-    2. Derived statuses (sorry, proven) based on leanOk
+    2. Derived statuses (sorry, proven) based on hasLean
 
     Priority order (highest to lowest):
     1. If manual `mathlibReady` flag → mathlibReady
-    2. If hasLean and no sorryAx → proven (fullyProven computed post-graph)
-    3. If hasLean but has sorryAx → sorry
-    4. If manual `ready` flag → ready
-    5. If manual `notReady` flag → notReady (also default for no Lean)
+    2. If manual `ready` flag → ready
+    3. If hasLean and no sorryAx → proven (fullyProven computed post-graph)
+    4. If hasLean but has sorryAx → sorry
+    5. Default: notReady (no Lean code)
 
     Note: fullyProven is computed by `computeFullyProven` after graph construction
     by checking that all dependencies are proven/fullyProven.
@@ -75,9 +75,8 @@ def getStatus (node : Architect.Node) (hasLean : Bool) (hasSorry : Bool := false
   match node.status with
   | .mathlibReady => .mathlibReady  -- Highest priority manual flag
   | .ready => .ready                 -- Manual ready flag
-  | .notReady => .notReady          -- Manual notReady flag
   | _ =>
-    -- Auto-derive from Lean presence (handles .sorry, .proven, .fullyProven passthrough)
+    -- Auto-derive from Lean presence
     if hasLean then
       if hasSorry then .sorry else .proven
     else
@@ -100,10 +99,10 @@ def registerNode (dressNode : Dress.NodeWithPos) (hasSorry : Bool) : BuilderM Un
   registerLabel label label
 
   -- Determine if this is a manually tagged status
-  -- Manual statuses are: notReady, ready, mathlibReady
-  -- Derived statuses are: sorry, proven, fullyProven
+  -- Manual statuses are: ready, mathlibReady
+  -- Derived statuses are: notReady (default), sorry, proven, fullyProven
   let isManual := match node.status with
-    | .notReady | .ready | .mathlibReady => true
+    | .ready | .mathlibReady => true
     | _ => false
 
   -- Priority: title > full qualified Lean name
