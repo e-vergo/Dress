@@ -21,6 +21,44 @@ open Verso.Output
 
 namespace Dress.HtmlRender
 
+/-- Wrap bracket characters with depth-colored spans.
+    Tracks nesting depth and wraps (, ), [, ], {, } with
+    <span class="lean-bracket-N"> where N cycles 1-6.
+
+    IMPORTANT: Skips brackets inside HTML tags (between < and >)
+    to avoid breaking HTML structure.
+-/
+def wrapBracketsWithDepth (html : String) : String := Id.run do
+  let mut result : String := ""
+  let mut depth : Nat := 0
+  let mut insideTag : Bool := false
+
+  for c in html.toList do
+    if c == '<' then
+      insideTag := true
+      result := result.push c
+    else if c == '>' then
+      insideTag := false
+      result := result.push c
+    else if insideTag then
+      -- Inside HTML tag, pass through unchanged
+      result := result.push c
+    else if c == '(' || c == '[' || c == '{' then
+      -- Opening bracket: increment depth first, then wrap
+      depth := depth + 1
+      let colorIndex := ((depth - 1) % 6) + 1
+      result := result ++ s!"<span class=\"lean-bracket-{colorIndex}\">{c}</span>"
+    else if c == ')' || c == ']' || c == '}' then
+      -- Closing bracket: wrap with current depth, then decrement
+      let colorIndex := if depth > 0 then (depth % 6) + 1 else 1
+      result := result ++ s!"<span class=\"lean-bracket-{colorIndex}\">{c}</span>"
+      if depth > 0 then
+        depth := depth - 1
+    else
+      result := result.push c
+
+  return result
+
 /-- Default context for rendering highlighted code. -/
 def defaultContext : HighlightHtmlM.Context Genre.none := {
   linkTargets := {}
@@ -54,9 +92,11 @@ def renderHighlightedWithState (hl : SubVerso.Highlighting.Highlighted)
 
 Uses `Genre.none` with empty `LinkTargets` (no hyperlinks) and default options.
 This provides syntax highlighting without interactive features like hovers or links.
+Applies rainbow bracket highlighting via `wrapBracketsWithDepth`.
 -/
 def renderHighlightedToHtml (hl : SubVerso.Highlighting.Highlighted) : String :=
-  (renderHighlightedWithHovers hl).1
+  let rawHtml := (renderHighlightedWithHovers hl).1
+  wrapBracketsWithDepth rawHtml
 
 /-- Render highlighted code wrapped in a code element with appropriate CSS classes.
 
