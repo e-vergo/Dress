@@ -16,15 +16,13 @@ namespace Dress.Graph.Svg
 structure SvgConfig where
   /-- Background color -/
   backgroundColor : String := "#ffffff"
-  /-- Node fill colors by status (8 statuses) -/
+  /-- Node fill colors by status (6 statuses) -/
   notReadyColor : String := "#F4A460"     -- Orange - not ready to formalize
-  statedColor : String := "#FFD700"       -- Yellow - statement exists, no Lean
   readyColor : String := "#20B2AA"        -- Teal - ready to formalize
   sorryColor : String := "#8B0000"        -- Deep red - has sorryAx
   provenColor : String := "#90EE90"       -- Light green - formalized without sorry
   fullyProvenColor : String := "#228B22"  -- Dark green - this + all deps proven
-  mathlibReadyColor : String := "#4169E1" -- Blue - ready to upstream
-  inMathlibColor : String := "#191970"    -- Dark blue - already in Mathlib
+  mathlibReadyColor : String := "#87CEEB" -- Light blue - ready to upstream
   /-- Node stroke color -/
   strokeColor : String := "#000000"
   /-- Node stroke width -/
@@ -46,17 +44,15 @@ structure SvgConfig where
 /-- Get fill color for a node status -/
 def getStatusColor (config : SvgConfig) : NodeStatus → String
   | .notReady => config.notReadyColor
-  | .stated => config.statedColor
   | .ready => config.readyColor
   | .sorry => config.sorryColor
   | .proven => config.provenColor
   | .fullyProven => config.fullyProvenColor
   | .mathlibReady => config.mathlibReadyColor
-  | .inMathlib => config.inMathlibColor
 
 /-- Get text color based on node status - white for dark backgrounds -/
 def getTextColor (config : SvgConfig) : NodeStatus → String
-  | .sorry | .fullyProven | .mathlibReady | .inMathlib => "#ffffff"
+  | .sorry | .fullyProven => "#ffffff"
   | _ => config.textColor
 
 /-- Escape text for SVG -/
@@ -203,16 +199,14 @@ def renderLegend (config : SvgConfig) (_x _y : Float) : String := Id.run do
   let padding : Float := 15.0
   let sectionGap : Float := 20.0
 
-  -- Color items - all 8 statuses
+  -- Color items - all 6 statuses
   let colorItems := #[
     ("Not Ready", config.notReadyColor),
-    ("Stated", config.statedColor),
     ("Ready", config.readyColor),
     ("Sorry", config.sorryColor),
     ("Proven", config.provenColor),
     ("Fully Proven", config.fullyProvenColor),
-    ("Mathlib Ready", config.mathlibReadyColor),
-    ("In Mathlib", config.inMathlibColor)
+    ("Mathlib Ready", config.mathlibReadyColor)
   ]
 
   -- Shape items (ellipse for theorems, box for definitions)
@@ -264,11 +258,11 @@ def renderLegend (config : SvgConfig) (_x _y : Float) : String := Id.run do
       let rx := boxSize / 2
       let ry := boxSize / 2.5
       svg := svg ++ s!"  <ellipse cx=\"{cx}\" cy=\"{cy}\" rx=\"{rx}\" ry=\"{ry}\" " ++
-        s!"fill=\"{config.statedColor}\" stroke=\"{config.strokeColor}\" stroke-width=\"1\"/>\n"
+        s!"fill=\"{config.provenColor}\" stroke=\"{config.strokeColor}\" stroke-width=\"1\"/>\n"
     else
       -- Mini rectangle for definitions
       svg := svg ++ s!"  <rect x=\"{padding}\" y=\"{itemY}\" width=\"{boxSize}\" height=\"{boxSize}\" " ++
-        s!"fill=\"{config.statedColor}\" stroke=\"{config.strokeColor}\" stroke-width=\"1\" rx=\"3\" ry=\"3\"/>\n"
+        s!"fill=\"{config.provenColor}\" stroke=\"{config.strokeColor}\" stroke-width=\"1\" rx=\"3\" ry=\"3\"/>\n"
 
     svg := svg ++ s!"  <text x=\"{padding + boxSize + gap}\" y=\"{itemY + boxSize - 4}\" " ++
       s!"font-family=\"{config.fontFamily}\" font-size=\"{fontSize}\" " ++

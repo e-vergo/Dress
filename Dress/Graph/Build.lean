@@ -62,40 +62,26 @@ def registerLabel (label nodeId : String) : BuilderM Unit := do
     2. Derived statuses (sorry, proven) based on leanOk
 
     Priority order (highest to lowest):
-    1. If manual `inMathlib` flag → inMathlib
-    2. If derived inMathlib (module prefix check) → inMathlib (handled elsewhere)
-    3. If manual `mathlibReady` flag → mathlibReady
-    4. If hasLean and all dependencies proven → fullyProven (TODO: graph traversal)
-    5. If hasLean and no sorryAx → proven
-    6. If hasLean but has sorryAx → sorry
-    7. If manual `ready` flag → ready
-    8. If manual `notReady` flag → notReady
-    9. Otherwise → stated
+    1. If manual `mathlibReady` flag → mathlibReady
+    2. If hasLean and no sorryAx → proven (fullyProven computed post-graph)
+    3. If hasLean but has sorryAx → sorry
+    4. If manual `ready` flag → ready
+    5. If manual `notReady` flag → notReady (also default for no Lean)
 
-    Note: The `leanOk` field (no sorryAx) would need to be passed in for proper
-    sorry detection. For now we use hasLean as a proxy for proven status.
-    The fullyProven computation requires graph traversal and is TODO.
+    Note: fullyProven is computed by `computeFullyProven` after graph construction
+    by checking that all dependencies are proven/fullyProven.
 -/
 def getStatus (node : Architect.Node) (hasLean : Bool) (hasSorry : Bool := false) : NodeStatus :=
-  -- Check for manual statuses first (highest priority)
   match node.status with
-  | .inMathlib => .inMathlib
-  | .mathlibReady => .mathlibReady
-  | .ready =>
-    -- Manual ready status is preserved - user explicitly marked this as "ready to formalize"
-    -- even if there's placeholder Lean code with sorry
-    .ready
-  | .notReady => .notReady
-  | .stated =>
-    -- Default: derive from Lean presence
+  | .mathlibReady => .mathlibReady  -- Highest priority manual flag
+  | .ready => .ready                 -- Manual ready flag
+  | .notReady => .notReady          -- Manual notReady flag
+  | _ =>
+    -- Auto-derive from Lean presence (handles .sorry, .proven, .fullyProven passthrough)
     if hasLean then
       if hasSorry then .sorry else .proven
     else
-      .stated
-  -- These are derived statuses that shouldn't be manually set but handle gracefully
-  | .sorry => .sorry
-  | .proven => .proven
-  | .fullyProven => .fullyProven  -- TODO: would need graph computation
+      .notReady  -- No Lean = notReady
 
 /-- Determine node shape from environment type -/
 def getShape (envType : String) : NodeShape :=
@@ -172,6 +158,88 @@ structure NodeBuildData where
   statementUses : Array String
   proofUses : Array String
 
+/-- Compute fullyProven status for all eligible nodes.
+    A node is fullyProven if:
+    1. It is `proven` status (not sorry, has Lean code)
+    2. ALL its dependencies (ancestors) are `proven` or `fullyProven`
+
+    Uses memoization for O(V+E) complexity.
+-/
+def computeFullyProven (g : Graph) : Graph := Id.run do
+  -- Build dependency map: nodeId -> [dependency nodeIds]
+  let mut deps : Std.HashMap String (Array String) := {}
+  for node in g.nodes do
+    deps := deps.insert node.id #[]
+  for edge in g.edges do
+    -- edge.from_ depends on edge.to
+    match deps.get? edge.from_ with
+    | some arr => deps := deps.insert edge.from_ (arr.push edge.to)
+    | none => pure ()
+
+  -- Build node lookup
+  let mut nodeMap : Std.HashMap String Node := {}
+  for node in g.nodes do
+    nodeMap := nodeMap.insert node.id node
+
+  -- Memoization: nodeId -> Bool (is this node + all ancestors complete?)
+  let mut memo : Std.HashMap String Bool := {}
+
+  -- Check if status is "complete" (proven or fullyProven)
+  let isComplete : NodeStatus → Bool
+    | .proven | .fullyProven => true
+    | _ => false
+
+  -- Recursive check with memoization using iterative worklist algorithm
+  for node in g.nodes do
+    if memo.contains node.id then continue
+    -- DFS to check all ancestors
+    let mut stack : Array String := #[node.id]
+    let mut visiting : Std.HashSet String := {}
+    while !stack.isEmpty do
+      let curr := stack.back!
+      if memo.contains curr then
+        stack := stack.pop
+        continue
+      -- Get node status
+      match nodeMap.get? curr with
+      | none =>
+        memo := memo.insert curr false
+        stack := stack.pop
+      | some currNode =>
+        if !isComplete currNode.status then
+          memo := memo.insert curr false
+          stack := stack.pop
+        else
+          -- Check if all deps are resolved
+          let currDeps := deps.get? curr |>.getD #[]
+          let unresolved := currDeps.filter (fun d => !memo.contains d)
+          if unresolved.isEmpty then
+            -- All deps resolved, compute our result
+            let allDepsComplete := currDeps.all (fun d => memo.get? d |>.getD false)
+            memo := memo.insert curr allDepsComplete
+            stack := stack.pop
+          else
+            -- Push unresolved deps onto stack
+            if visiting.contains curr then
+              -- Cycle detected, mark as incomplete
+              memo := memo.insert curr false
+              stack := stack.pop
+            else
+              visiting := visiting.insert curr
+              for dep in unresolved do
+                stack := stack.push dep
+
+  -- Update nodes: proven -> fullyProven where all ancestors complete
+  let updatedNodes := g.nodes.map fun node =>
+    if node.status == .proven then
+      match memo.get? node.id with
+      | some true => { node with status := .fullyProven }
+      | _ => node
+    else
+      node
+
+  { g with nodes := updatedNodes }
+
 /-- Build graph from an array of node build data using two-pass processing.
     PASS 1: Register all labels and create nodes (so all labels exist)
     PASS 2: Add all edges (now back-edges work because targets are registered) -/
@@ -198,7 +266,8 @@ def buildGraph (nodesData : Array NodeBuildData) : Graph :=
     return result
   -- Return graph without artificial connectivity edges - disconnected components
   -- are now visible and can be detected via findComponents for the Checks feature
-  { nodes := state.nodes, edges := uniqueEdges }
+  let graph := { nodes := state.nodes, edges := uniqueEdges }
+  computeFullyProven graph  -- Post-process to compute fullyProven
 
 end Builder
 
