@@ -49,8 +49,8 @@ def wrapBracketsWithDepth (html : String) : String := Id.run do
       let colorIndex := ((depth - 1) % 6) + 1
       result := result ++ s!"<span class=\"lean-bracket-{colorIndex}\">{c}</span>"
     else if c == ')' || c == ']' || c == '}' then
-      -- Closing bracket: wrap with current depth, then decrement
-      let colorIndex := if depth > 0 then (depth % 6) + 1 else 1
+      -- Closing bracket: wrap with current depth (using same formula as opening), then decrement
+      let colorIndex := if depth > 0 then ((depth - 1) % 6) + 1 else 1
       result := result ++ s!"<span class=\"lean-bracket-{colorIndex}\">{c}</span>"
       if depth > 0 then
         depth := depth - 1
@@ -63,45 +63,45 @@ def wrapBracketsWithDepth (html : String) : String := Id.run do
     Detects `--` pattern outside of HTML tags and wraps up to newline
     with `<span class="line-comment">`.
 
+    This function handles the case where SubVerso outputs comment text as plain
+    characters (possibly interspersed with spans). It wraps from `--` to the
+    next newline, preserving any HTML structure within.
+
     IMPORTANT: Skips `--` inside HTML tags to avoid breaking structure.
-    Also skips if already inside a span (to avoid double-wrapping).
 -/
 def wrapLineComments (html : String) : String := Id.run do
   let mut result : String := ""
   let mut i : Nat := 0
   let chars := html.toList.toArray
   let len := chars.size
+  let mut insideTag : Bool := false
 
   while i < len do
     let c := chars[i]!
 
-    -- Skip HTML tags entirely
+    -- Track when we're inside HTML tags
     if c == '<' then
-      -- Find the closing '>'
-      let tagStart := i
-      while i < len && chars[i]! != '>' do
-        i := i + 1
-      if i < len then
-        i := i + 1  -- include the '>'
-      -- Copy the entire tag
-      for j in [tagStart:i] do
-        if j < len then
-          result := result.push chars[j]!
-    -- Check for "--" comment start
+      insideTag := true
+      result := result.push c
+      i := i + 1
+    else if c == '>' then
+      insideTag := false
+      result := result.push c
+      i := i + 1
+    else if insideTag then
+      -- Inside HTML tag, pass through unchanged
+      result := result.push c
+      i := i + 1
+    -- Check for "--" comment start (outside of tags)
     else if c == '-' && i + 1 < len && chars[i + 1]! == '-' then
       -- Found a line comment, wrap until newline or end
-      let commentStart := i
-      -- Find the end of the line (newline or end of string)
+      result := result ++ "<span class=\"line-comment\">"
+      -- Copy everything until newline, preserving HTML structure
       while i < len && chars[i]! != '\n' do
+        result := result.push chars[i]!
         i := i + 1
-      -- Extract the comment content
-      let mut commentContent : String := ""
-      for j in [commentStart:i] do
-        if j < len then
-          commentContent := commentContent.push chars[j]!
-      -- Wrap in span
-      result := result ++ s!"<span class=\"line-comment\">{commentContent}</span>"
-      -- Don't increment i here - the while loop condition will handle newline
+      result := result ++ "</span>"
+      -- Don't increment i here - the next iteration will handle newline or exit
     else
       result := result.push c
       i := i + 1
