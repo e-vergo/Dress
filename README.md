@@ -119,10 +119,15 @@ The `graph` subcommand performs final processing:
 
 1. Loads modules and extracts blueprint nodes from the environment
 2. Infers dependencies from Lean code via `Node.inferUses`
-3. Validates the graph (connectivity, cycle detection)
-4. Computes status counts and upgrades nodes to `fullyProven`
-5. Runs Sugiyama layout for hierarchical visualization
-6. Writes `dep-graph.svg`, `dep-graph.json`, and `manifest.json`
+3. **Two-pass edge processing:**
+   - PASS 1: Register all labels and create nodes (so back-references work)
+   - PASS 2: Add all edges (now targets exist for back-edges)
+   - Edge deduplication removes duplicate (from, to) pairs
+4. Validates the graph (connectivity, cycle detection)
+5. Computes status counts and upgrades nodes to `fullyProven`
+6. Applies transitive reduction (skipped for >100 nodes)
+7. Runs Sugiyama layout for hierarchical visualization
+8. Writes `dep-graph.svg`, `dep-graph.json`, and `manifest.json`
 
 ## Artifact Format
 
@@ -133,10 +138,12 @@ Written to `.lake/build/dressed/{Module/Path}/{sanitized-label}/`:
 | File | Description |
 |------|-------------|
 | `decl.tex` | LaTeX source for the declaration |
-| `decl.html` | Pre-rendered HTML with hover spans and rainbow brackets |
-| `decl.json` | Metadata including SubVerso highlighting data |
-| `decl.hovers.json` | Hover tooltip content for interactive display |
-| `manifest.entry` | Label-to-path mapping for aggregation |
+| `decl.html` | Pre-rendered HTML with hover spans and rainbow brackets via `toHtmlRainbow` |
+| `decl.json` | Metadata: `{"name": "...", "label": "...", "highlighting": {...}}` |
+| `decl.hovers.json` | Hover tooltip content for interactive display (JSON mapping IDs to content) |
+| `manifest.entry` | Label-to-path mapping: `{"label": "...", "path": "..."}` |
+
+Timing data is available via `trace[blueprint.timing]` for performance analysis.
 
 ### Module-Level Artifacts
 
@@ -236,11 +243,14 @@ Dress implements a Sugiyama-style hierarchical layout algorithm in `Graph/Layout
 
 #### 1. Acyclic Transformation
 
-The graph is made acyclic before layout:
+The graph is made acyclic before layout using the Graphviz approach:
 
-1. DFS identifies back-edges (edges that would create cycles)
-2. Back-edges are reversed one at a time (Graphviz approach)
-3. Reversed edges are marked with `isReversed` flag for correct arrow direction in SVG
+1. DFS identifies back-edges (edges from a node to an ancestor in the DFS tree)
+2. Back-edges are reversed **one at a time** with iteration until no cycles remain
+3. Reversed edges are marked with `isReversed := true` for correct arrow direction in SVG
+4. Safety bound: maximum iterations = `graph.edges.size + 1`
+
+The `reverseBezierPoints` function handles reversing Bezier control points so arrows point correctly.
 
 #### 2. Layer Assignment
 
@@ -271,15 +281,27 @@ Barycenter-based positioning with refinement:
 
 For small graphs (<=100 nodes):
 
-1. Build visibility graph from node corners/octants
-2. Find shortest path using Dijkstra's algorithm
-3. Convert polyline to smooth cubic Bezier curves via Catmull-Rom interpolation
+1. Build visibility graph from node corners (rectangles) or octant points (ellipses)
+2. Use Liang-Barsky for rectangle intersection, parametric approach for ellipse intersection
+3. Find shortest path using O(V^2) Dijkstra's algorithm
+4. Convert polyline to smooth cubic Bezier curves via Catmull-Rom interpolation
+5. Clip endpoints to node boundaries based on shape
 
-For large graphs (>100 nodes), simplified direct Bezier curves are used.
+For large graphs (>100 nodes), simplified direct Bezier curves are used with offset-based control points for gentle arcs.
 
 #### 6. Coordinate Normalization
 
-Final coordinates are normalized so content starts at (padding, padding) with viewBox origin at (0, 0).
+Final coordinates are normalized so content starts at (padding, padding) with viewBox origin at (0, 0):
+
+```lean
+let minX := nodes.foldl (fun acc n => min acc n.x) Float.inf
+let minY := nodes.foldl (fun acc n => min acc n.y) Float.inf
+let offsetX := padding - minX
+let offsetY := padding - minY
+-- All nodes shifted by (offsetX, offsetY)
+```
+
+This normalization is required for proper SVG centering because JavaScript's `getBBox()` expects the viewBox origin to be (0, 0).
 
 ### Performance Characteristics
 
@@ -291,11 +313,14 @@ Final coordinates are normalized so content starts at (padding, padding) with vi
 | Edge routing (visibility graph) | O(V^2) per edge | Skipped for >100 nodes |
 | Transitive reduction | O(n^3) Floyd-Warshall | Skipped for >100 nodes |
 
-**>100 node optimizations** (automatic):
-- Max 2 barycenter iterations (vs 4)
-- Skip transpose heuristic
-- Skip visibility graph routing (use simple beziers)
-- Skip transitive reduction
+**>100 node optimizations** (automatic, triggered at `g.nodes.size > 100`):
+- Max 2 barycenter iterations (vs 4) - in `orderLayers`
+- Skip transpose heuristic - O(L x N x swaps) per call
+- Skip visibility graph routing - O(V^2) per edge
+- Skip transitive reduction - O(n^3) Floyd-Warshall
+- Use simplified direct Bezier curves instead
+
+These thresholds allow PNT (591 nodes) to render in ~15 seconds while maintaining quality for smaller graphs like GCR (57 nodes) and SBS-Test (33 nodes).
 
 **Expected layout times:**
 
@@ -309,26 +334,31 @@ Final coordinates are normalized so content starts at (padding, padding) with vi
 
 ### Connectivity (`findComponents`)
 
-BFS-based component detection:
+BFS-based component detection with O(V+E) complexity:
 
 ```lean
 def findComponents (g : Graph) : Array (Array String)
 ```
 
+- Treats the graph as undirected for connectivity purposes
 - Single component indicates a fully connected graph
 - Multiple components may indicate missing dependencies or orphaned declarations
+- Results stored in `manifest.json` under `checks.numComponents` and `checks.componentSizes`
 
 ### Cycle Detection (`detectCycles`)
 
-DFS with gray/black coloring:
+DFS with gray/black coloring (O(V+E) complexity):
 
 ```lean
 def detectCycles (g : Graph) : Array (Array String)
 ```
 
-- Gray nodes are in the current DFS path
+- White nodes: unvisited
+- Gray nodes: in the current DFS path
+- Black nodes: fully processed
 - Back-edge to gray node indicates cycle
 - Returns array of detected cycles (each cycle is array of node IDs)
+- Results stored in `manifest.json` under `checks.cycles`
 
 ### Fully Proven Computation (`computeFullyProven`)
 
@@ -338,15 +368,21 @@ Post-processing step with O(V+E) complexity via memoization:
 def computeFullyProven (g : Graph) : Graph
 ```
 
+Uses an iterative worklist algorithm instead of recursion:
+1. Build dependency map: for each edge (A, B), B depends on A
+2. For each node, DFS through dependencies using a stack
+3. Memoize results to avoid recomputation
+4. Detect and handle cycles (mark as incomplete)
+
 A node is upgraded to `fullyProven` if:
-1. Its status is `proven`
+1. Its status is `proven` (has Lean code without sorryAx)
 2. All its ancestors are `proven` or `fullyProven`
 
-This provides stronger verification guarantees than `proven` alone.
+This provides stronger verification guarantees than `proven` alone - it means the entire proof tree from axioms to this node is complete.
 
 ## Rainbow Bracket Highlighting
 
-Dress uses Verso's `toHtmlRainbow` for bracket highlighting. The `HtmlRender.lean` module wraps Verso's highlighting functions:
+Dress uses Verso's `toHtmlRainbow` for bracket highlighting. The `HtmlRender.lean` module wraps Verso's highlighting functions using `Genre.none` to avoid Verso's full document infrastructure:
 
 ```lean
 def renderHighlightedWithHovers (hl : Highlighted) : String × String :=
@@ -354,6 +390,11 @@ def renderHighlightedWithHovers (hl : Highlighted) : String × String :=
   let hoverJson := finalState.dedup.docJson.compress
   (html.asString (breakLines := false), hoverJson)
 ```
+
+Additional rendering modes:
+- `renderHighlightedBlock`: Wraps in `class="hl lean block"` using `blockHtmlRainbow`
+- `renderHighlightedInline`: Wraps in `class="hl lean inline"` using `inlineHtmlRainbow`
+- `renderHighlightedWithState`: Allows chaining renders with continuous hover ID numbering
 
 The output uses CSS classes `lean-bracket-1` through `lean-bracket-6` for six distinct depth colors:
 
