@@ -59,49 +59,6 @@ def wrapBracketsWithDepth (html : String) : String := Id.run do
 
   return result
 
-/-- Wrap line comments with styled spans.
-    Detects `-- ...` patterns and wraps them with `<span class="line-comment">`.
-
-    IMPORTANT: Skips `--` inside HTML tags (between < and >) to avoid
-    breaking HTML structure. Matches wrapBracketsWithDepth pattern.
--/
-def wrapLineComments (html : String) : String := Id.run do
-  let mut result : String := ""
-  let mut insideTag : Bool := false
-  let mut inComment : Bool := false
-  let mut prevChar : Char := ' '
-
-  for c in html.toList do
-    if inComment then
-      if c == '\n' then
-        -- End comment span before newline, then add newline
-        result := result ++ "</span>\n"
-        inComment := false
-      else
-        result := result.push c
-    else if c == '<' then
-      insideTag := true
-      result := result.push c
-    else if c == '>' then
-      insideTag := false
-      result := result.push c
-    else if insideTag then
-      -- Inside HTML tag, pass through unchanged
-      result := result.push c
-    else if prevChar == '-' && c == '-' then
-      -- Found "--", start comment (replace the previous '-' with span)
-      result := (result.dropEnd 1).toString ++ "<span class=\"line-comment\">--"
-      inComment := true
-    else
-      result := result.push c
-    prevChar := c
-
-  -- Close any unclosed comment at end of string
-  if inComment then
-    result := result ++ "</span>"
-
-  return result
-
 /-- Default context for rendering highlighted code. -/
 def defaultContext : HighlightHtmlM.Context Genre.none := {
   linkTargets := {}
@@ -139,7 +96,7 @@ Applies rainbow bracket highlighting via `wrapBracketsWithDepth`.
 -/
 def renderHighlightedToHtml (hl : SubVerso.Highlighting.Highlighted) : String :=
   let rawHtml := (renderHighlightedWithHovers hl).1
-  wrapLineComments (wrapBracketsWithDepth rawHtml)
+  wrapBracketsWithDepth rawHtml
 
 /-- Render highlighted code wrapped in a code element with appropriate CSS classes.
 
