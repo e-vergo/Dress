@@ -89,20 +89,18 @@ def generateDeclarationTexFromNode (name : Name) (node : Architect.Node)
 
     -- Render signature to HTML with hovers and base64 encode
     -- Use stateful renderer so proof body IDs continue from signature IDs
-    let (sigHtmlRaw, sigHoverJson, sigState) := HtmlRender.renderHighlightedWithState sigHl
-    -- Apply rainbow bracket highlighting
-    let sigHtml := HtmlRender.wrapBracketsWithDepth sigHtmlRaw
+    -- Rainbow bracket highlighting is applied automatically by Verso's toHtmlRainbow
+    let (sigHtml, sigHoverJson, sigState) := HtmlRender.renderHighlightedWithState sigHl
     let sigBase64 := Base64.encodeString sigHtml
     out := out ++ s!"\\leansignaturesourcehtml\{{sigBase64}}\n"
 
     -- Render proof body if present - WITH HOVERS
     -- Continue hover ID numbering from signature to avoid collisions
+    -- Rainbow bracket highlighting is applied automatically by Verso's toHtmlRainbow
     let mut proofHoverJson := "{}"
     if let some proofHl := bodyHl then
-      let (proofHtmlRaw, proofHovers, _) := HtmlRender.renderHighlightedWithState proofHl sigState
+      let (proofHtml, proofHovers, _) := HtmlRender.renderHighlightedWithState proofHl sigState
       proofHoverJson := proofHovers
-      -- Apply rainbow bracket highlighting
-      let proofHtml := HtmlRender.wrapBracketsWithDepth proofHtmlRaw
       let proofBase64 := Base64.encodeString proofHtml
       out := out ++ s!"\\leanproofsourcehtml\{{proofBase64}}\n"
 

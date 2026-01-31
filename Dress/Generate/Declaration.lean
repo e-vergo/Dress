@@ -67,10 +67,9 @@ def writeDeclarationArtifactsFromNode (name : Name) (node : Architect.Node)
   -- Time: HTML rendering and writing
   let (htmlRenderTime, htmlWriteTime) ← if let some hl := highlighting then
     -- Time: Render HTML with hovers
+    -- Rainbow bracket highlighting is applied automatically by Verso's toHtmlRainbow
     let renderStart ← IO.monoMsNow
-    let (rawHtml, hoverJson) := HtmlRender.renderHighlightedWithHovers hl
-    -- Apply rainbow bracket highlighting
-    let htmlContent := HtmlRender.wrapBracketsWithDepth rawHtml
+    let (htmlContent, hoverJson) := HtmlRender.renderHighlightedWithHovers hl
     let renderEnd ← IO.monoMsNow
 
     -- Time: Write HTML and hovers
