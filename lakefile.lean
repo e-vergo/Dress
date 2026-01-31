@@ -18,11 +18,13 @@ require LeanArchitect from git
 require Cli from git
   "https://github.com/mhuisi/lean4-cli" @ "v4.27.0"
 
--- Using local subverso fork with lineComment support
-require subverso from ".." / "subverso"
+-- Using forked subverso with SBS enhancements
+require subverso from git
+  "https://github.com/e-vergo/subverso.git" @ "main"
 
--- Using local verso fork with lineComment support
-require verso from ".." / "verso"
+-- Using forked verso with bracket/comment highlighting
+require verso from git
+  "https://github.com/e-vergo/verso.git" @ "main"
 
 /-! ## Path Helpers
 
