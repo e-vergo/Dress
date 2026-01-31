@@ -21,8 +21,8 @@ require Cli from git
 require subverso from git
   "https://github.com/e-vergo/subverso.git" @ "tactic-hover-support"
 
-require verso from git
-  "https://github.com/leanprover/verso.git" @ "9137d01"
+-- Using local verso fork with lineComment support
+require verso from ".." / "verso"
 
 /-! ## Path Helpers
 
