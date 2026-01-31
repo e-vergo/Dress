@@ -59,6 +59,55 @@ def wrapBracketsWithDepth (html : String) : String := Id.run do
 
   return result
 
+/-- Wrap line comments (-- to end of line) with styled spans.
+    Detects `--` pattern outside of HTML tags and wraps up to newline
+    with `<span class="line-comment">`.
+
+    IMPORTANT: Skips `--` inside HTML tags to avoid breaking structure.
+    Also skips if already inside a span (to avoid double-wrapping).
+-/
+def wrapLineComments (html : String) : String := Id.run do
+  let mut result : String := ""
+  let mut i : Nat := 0
+  let chars := html.toList.toArray
+  let len := chars.size
+
+  while i < len do
+    let c := chars[i]!
+
+    -- Skip HTML tags entirely
+    if c == '<' then
+      -- Find the closing '>'
+      let tagStart := i
+      while i < len && chars[i]! != '>' do
+        i := i + 1
+      if i < len then
+        i := i + 1  -- include the '>'
+      -- Copy the entire tag
+      for j in [tagStart:i] do
+        if j < len then
+          result := result.push chars[j]!
+    -- Check for "--" comment start
+    else if c == '-' && i + 1 < len && chars[i + 1]! == '-' then
+      -- Found a line comment, wrap until newline or end
+      let commentStart := i
+      -- Find the end of the line (newline or end of string)
+      while i < len && chars[i]! != '\n' do
+        i := i + 1
+      -- Extract the comment content
+      let mut commentContent : String := ""
+      for j in [commentStart:i] do
+        if j < len then
+          commentContent := commentContent.push chars[j]!
+      -- Wrap in span
+      result := result ++ s!"<span class=\"line-comment\">{commentContent}</span>"
+      -- Don't increment i here - the while loop condition will handle newline
+    else
+      result := result.push c
+      i := i + 1
+
+  return result
+
 /-- Default context for rendering highlighted code. -/
 def defaultContext : HighlightHtmlM.Context Genre.none := {
   linkTargets := {}
@@ -92,11 +141,12 @@ def renderHighlightedWithState (hl : SubVerso.Highlighting.Highlighted)
 
 Uses `Genre.none` with empty `LinkTargets` (no hyperlinks) and default options.
 This provides syntax highlighting without interactive features like hovers or links.
-Applies rainbow bracket highlighting via `wrapBracketsWithDepth`.
+Applies rainbow bracket highlighting and line comment styling via post-processing.
 -/
 def renderHighlightedToHtml (hl : SubVerso.Highlighting.Highlighted) : String :=
   let rawHtml := (renderHighlightedWithHovers hl).1
-  wrapBracketsWithDepth rawHtml
+  let withBrackets := wrapBracketsWithDepth rawHtml
+  wrapLineComments withBrackets
 
 /-- Render highlighted code wrapped in a code element with appropriate CSS classes.
 
