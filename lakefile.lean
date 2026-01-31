@@ -18,8 +18,8 @@ require LeanArchitect from git
 require Cli from git
   "https://github.com/mhuisi/lean4-cli" @ "v4.27.0"
 
-require subverso from git
-  "https://github.com/e-vergo/subverso.git" @ "tactic-hover-support"
+-- Using local subverso fork with lineComment support
+require subverso from ".." / "subverso"
 
 -- Using local verso fork with lineComment support
 require verso from ".." / "verso"
