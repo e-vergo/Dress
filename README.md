@@ -1,10 +1,18 @@
 # Dress
 
-Artifact generation for Lean 4 mathematical blueprints. Transforms `@[blueprint]`-decorated declarations into syntax-highlighted HTML and LaTeX with interactive hovers, proof toggles, and dependency graph visualization.
+Artifact generation for Lean 4 mathematical blueprints. Transforms `@[blueprint]`-decorated declarations into syntax-highlighted HTML and LaTeX with interactive hovers, and builds dependency graphs with hierarchical layout.
 
 ## Overview
 
-Dress is the artifact generation layer of the [Side-by-Side Blueprint](https://github.com/e-vergo/Side-By-Side-Blueprint) toolchain. It intercepts declarations during Lean elaboration to capture syntax highlighting via [SubVerso](https://github.com/e-vergo/subverso), renders HTML via [Verso](https://github.com/e-vergo/verso), and builds dependency graphs with the Sugiyama hierarchical layout algorithm.
+Dress is the artifact generation layer of the [Side-by-Side Blueprint](https://github.com/e-vergo/Side-By-Side-Blueprint) toolchain. It:
+
+1. Intercepts `@[blueprint]` declarations during Lean elaboration
+2. Captures syntax highlighting via [SubVerso](https://github.com/e-vergo/subverso) while info trees are still available
+3. Renders HTML with rainbow bracket matching via [Verso](https://github.com/e-vergo/verso)
+4. Generates LaTeX with embedded hover data
+5. Builds dependency graphs with Sugiyama hierarchical layout
+6. Validates graph structure (connectivity, cycles)
+7. Computes status counts and `fullyProven` upgrades
 
 Dress re-exports [LeanArchitect](https://github.com/e-vergo/LeanArchitect), so importing Dress provides the `@[blueprint]` attribute.
 
@@ -14,10 +22,12 @@ Dress re-exports [LeanArchitect](https://github.com/e-vergo/LeanArchitect), so i
 SubVerso -> LeanArchitect -> Dress -> Runway
 ```
 
-- **SubVerso**: Extracts syntax highlighting and semantic information during elaboration
-- **LeanArchitect**: Defines the `@[blueprint]` attribute with 8 metadata and 3 manual status options
-- **Dress**: Generates artifacts, computes statistics, validates graphs
-- **Runway**: Consumes Dress output to produce the final website
+| Component | Role |
+|-----------|------|
+| [SubVerso](https://github.com/e-vergo/subverso) | Extracts syntax highlighting and semantic information during elaboration |
+| [LeanArchitect](https://github.com/e-vergo/LeanArchitect) | Defines `@[blueprint]` attribute with 8 metadata and 3 manual status options |
+| Dress | Generates artifacts, computes statistics, validates graphs, performs layout |
+| [Runway](https://github.com/e-vergo/Runway) | Consumes Dress output to produce the final website |
 
 ## Installation
 
@@ -77,20 +87,20 @@ lake build MyProject.MyModule:blueprint # Specific module
 lake exe extract_blueprint graph Module1 Module2 Module3
 ```
 
-## Build Phases
+## Build Pipeline
 
-Dress operates in three distinct phases:
+Dress operates in three phases during the build process.
 
 ### Phase 1: Per-Declaration Capture (During Elaboration)
 
 When Lean compiles with `BLUEPRINT_DRESS=1`, the `elab_rules` in `Capture/ElabRules.lean` intercept each `@[blueprint]` declaration:
 
-1. **Standard elaboration** runs first (the hook calls `elabCommandTopLevel`)
-2. **SubVerso highlighting** is captured via `highlightIncludingUnparsed`
-3. **Code splitting** separates signature from proof body at the `:=` boundary
-4. **Artifacts written** to `.lake/build/dressed/{Module/Path}/{sanitized-label}/`
+1. Standard elaboration runs first (the hook calls `elabCommandTopLevel`)
+2. SubVerso highlighting is captured via `highlightIncludingUnparsed`
+3. Code splitting separates signature from proof body at the `:=` boundary
+4. Artifacts are written to `.lake/build/dressed/{Module/Path}/{sanitized-label}/`
 
-Info trees are ephemeral and only exist during elaboration, so highlighting must be captured immediately.
+Info trees are ephemeral and only exist during elaboration, so highlighting must be captured immediately. This accounts for 93-99% of build time.
 
 ### Phase 2: Lake Facet Aggregation
 
@@ -140,8 +150,8 @@ Written to `.lake/build/dressed/{Module/Path}/{sanitized-label}/`:
 | File | Location | Description |
 |------|----------|-------------|
 | `{LibName}.tex` | `.lake/build/dressed/library/` | Library index with `\inputleanmodule` macro |
-| `dep-graph.svg` | `.lake/build/dressed/` | Dependency graph visualization |
-| `dep-graph.json` | `.lake/build/dressed/` | Layout data for D3.js rendering |
+| `dep-graph.svg` | `.lake/build/dressed/` | Dependency graph SVG visualization |
+| `dep-graph.json` | `.lake/build/dressed/` | Layout data for interactive rendering |
 | `manifest.json` | `.lake/build/dressed/` | Stats, validation, metadata for Runway |
 
 ## Manifest Schema
@@ -182,28 +192,6 @@ The `manifest.json` file contains precomputed data consumed by Runway:
 
 Statistics are computed upstream in Dress. Runway loads `manifest.json` without recomputation, providing a soundness guarantee that displayed statistics match the actual graph state.
 
-## Rainbow Bracket Highlighting
-
-Dress uses Verso's `toHtmlRainbow` for bracket highlighting. The `HtmlRender.lean` module wraps Verso's highlighting functions:
-
-```lean
-def renderHighlightedWithHovers (hl : Highlighted) : String × String :=
-  let (html, finalState) := (hl.toHtmlRainbow).run defaultContext |>.run .empty
-  let hoverJson := finalState.dedup.docJson.compress
-  (html.asString (breakLines := false), hoverJson)
-```
-
-The output uses CSS classes `lean-bracket-1` through `lean-bracket-6` for six distinct depth colors:
-
-| Class | Light Mode | Dark Mode |
-|-------|------------|-----------|
-| `lean-bracket-1` | #d000ff | #e040ff |
-| `lean-bracket-2` | #5126ff | #7156ff |
-| `lean-bracket-3` | #0184BC | #01a4dc |
-| `lean-bracket-4` | #4078F2 | #5098ff |
-| `lean-bracket-5` | #50A14F | #70c16f |
-| `lean-bracket-6` | #E45649 | #f47669 |
-
 ## 6-Status Model
 
 Node status types are defined in LeanArchitect and re-exported by Dress:
@@ -240,52 +228,82 @@ Node status types are defined in LeanArchitect and re-exported by Dress:
 | Solid | Proof dependency (used in proof body) |
 | Dashed | Statement dependency (used in signature) |
 
-## Graph Algorithms
+## Graph Layout Algorithm
 
-### Layer Assignment (`Layout.lean`)
+Dress implements a Sugiyama-style hierarchical layout algorithm in `Graph/Layout.lean` (~1500 lines).
 
-**Longest-path algorithm** assigns nodes to vertical layers:
+### Algorithm Phases
+
+#### 1. Acyclic Transformation
+
+The graph is made acyclic before layout:
+
+1. DFS identifies back-edges (edges that would create cycles)
+2. Back-edges are reversed one at a time (Graphviz approach)
+3. Reversed edges are marked with `isReversed` flag for correct arrow direction in SVG
+
+#### 2. Layer Assignment
+
+Longest-path algorithm assigns nodes to vertical layers:
+
 - Nodes with no incoming edges are placed at layer 0
 - Each node is placed one layer above its highest dependency
 - Produces valid topological ordering for acyclic graphs
 
-### Crossing Reduction
+#### 3. Crossing Reduction
 
-**Median heuristic** minimizes edge crossings:
+Median heuristic minimizes edge crossings:
+
 - For each layer, compute median position of connected nodes in adjacent layer
 - Reorder layer by median values
 - Alternate forward and backward passes
-- **Transpose pass**: iteratively swap adjacent nodes if it reduces crossings
+- Transpose pass: iteratively swap adjacent nodes if it reduces crossings
 
-### Coordinate Assignment
+#### 4. Coordinate Assignment
 
-**Barycenter-based positioning** with refinement:
+Barycenter-based positioning with refinement:
+
 - Initial placement on a grid centered by layer width
 - Iterative refinement pulls nodes toward median of connected neighbors
 - Overlap resolution prevents node collisions
 
-### Edge Routing
+#### 5. Edge Routing
 
 For small graphs (<=100 nodes):
 
-1. **Visibility graph**: Collect vertices at obstacle corners/octants
-2. **Dijkstra's algorithm**: Find shortest path around obstacles
-3. **Bezier fitting**: Convert polyline to smooth cubic Bezier curves via Catmull-Rom interpolation
+1. Build visibility graph from node corners/octants
+2. Find shortest path using Dijkstra's algorithm
+3. Convert polyline to smooth cubic Bezier curves via Catmull-Rom interpolation
 
-For large graphs (>100 nodes), simplified direct Bezier curves are used to avoid O(V^2) per-edge visibility graph construction.
+For large graphs (>100 nodes), simplified direct Bezier curves are used.
 
-### Cycle Handling
+#### 6. Coordinate Normalization
 
-The graph is made acyclic before layout:
+Final coordinates are normalized so content starts at (padding, padding) with viewBox origin at (0, 0).
 
-1. **DFS** identifies back-edges (edges that would create cycles)
-2. **Back-edges are reversed** (Graphviz approach)
-3. Layout proceeds on acyclic graph
-4. Reversed edges are marked with `isReversed` flag for correct arrow direction in SVG
+### Performance Characteristics
 
-### Transitive Reduction
+| Operation | Complexity | Notes |
+|-----------|------------|-------|
+| Layer assignment | O(V+E) | BFS from source nodes |
+| Crossing reduction (barycenter) | O(n^2) normal, O(n) with iteration limit | Reduced to 2 iterations for >100 nodes |
+| Transpose heuristic | O(L x N x swaps) | Skipped for >100 nodes |
+| Edge routing (visibility graph) | O(V^2) per edge | Skipped for >100 nodes |
+| Transitive reduction | O(n^3) Floyd-Warshall | Skipped for >100 nodes |
 
-Removes redundant edges implied by transitivity. Uses Floyd-Warshall which is O(n^3), so it is **skipped for graphs with more than 100 nodes** to avoid multi-hour build times on large projects.
+**>100 node optimizations** (automatic):
+- Max 2 barycenter iterations (vs 4)
+- Skip transpose heuristic
+- Skip visibility graph routing (use simple beziers)
+- Skip transitive reduction
+
+**Expected layout times:**
+
+| Scale | Nodes | Layout Time |
+|-------|-------|-------------|
+| Small | <50 | <1s |
+| Medium | 50-100 | 1-3s |
+| Large | >100 | 5-20s |
 
 ## Validation Checks
 
@@ -326,6 +344,28 @@ A node is upgraded to `fullyProven` if:
 
 This provides stronger verification guarantees than `proven` alone.
 
+## Rainbow Bracket Highlighting
+
+Dress uses Verso's `toHtmlRainbow` for bracket highlighting. The `HtmlRender.lean` module wraps Verso's highlighting functions:
+
+```lean
+def renderHighlightedWithHovers (hl : Highlighted) : String × String :=
+  let (html, finalState) := (hl.toHtmlRainbow).run defaultContext |>.run .empty
+  let hoverJson := finalState.dedup.docJson.compress
+  (html.asString (breakLines := false), hoverJson)
+```
+
+The output uses CSS classes `lean-bracket-1` through `lean-bracket-6` for six distinct depth colors:
+
+| Class | Light Mode | Dark Mode |
+|-------|------------|-----------|
+| `lean-bracket-1` | #d000ff | #e040ff |
+| `lean-bracket-2` | #5126ff | #7156ff |
+| `lean-bracket-3` | #0184BC | #01a4dc |
+| `lean-bracket-4` | #4078F2 | #5098ff |
+| `lean-bracket-5` | #50A14F | #70c16f |
+| `lean-bracket-6` | #E45649 | #f47669 |
+
 ## Module Structure
 
 ```
@@ -344,7 +384,7 @@ Dress/
   Graph/
     Types.lean         # Node, Edge, Graph, StatusCounts, CheckResults
     Build.lean         # Graph construction, validation, computeFullyProven
-    Layout.lean        # Sugiyama algorithm, edge routing (~1450 lines)
+    Layout.lean        # Sugiyama algorithm, edge routing (~1500 lines)
     Json.lean          # JSON serialization for D3.js
     Svg.lean           # SVG generation
 
@@ -420,8 +460,8 @@ Runway loads:
 | Dependency | Purpose |
 |------------|---------|
 | [LeanArchitect](https://github.com/e-vergo/LeanArchitect) | `@[blueprint]` attribute definition |
-| [SubVerso](https://github.com/e-vergo/subverso) | Syntax highlighting extraction |
-| [Verso](https://github.com/e-vergo/verso) | HTML rendering with rainbow brackets |
+| [SubVerso](https://github.com/e-vergo/subverso) | Syntax highlighting extraction with O(1) indexed lookups |
+| [Verso](https://github.com/e-vergo/verso) | HTML rendering with rainbow bracket matching |
 | [Cli](https://github.com/mhuisi/lean4-cli) | Command-line interface |
 
 ## Related Repositories
@@ -431,7 +471,7 @@ Runway loads:
 | [Runway](https://github.com/e-vergo/Runway) | Site generator (downstream) |
 | [LeanArchitect](https://github.com/e-vergo/LeanArchitect) | Blueprint attribute (upstream) |
 | [SubVerso](https://github.com/e-vergo/subverso) | Syntax highlighting (upstream) |
-| [SBS-Test](https://github.com/e-vergo/SBS-Test) | Minimal test project (16 nodes, all 6 statuses) |
+| [SBS-Test](https://github.com/e-vergo/SBS-Test) | Minimal test project (25 nodes, all 6 statuses) |
 | [dress-blueprint-action](https://github.com/e-vergo/dress-blueprint-action) | GitHub Actions CI solution |
 
 ## License
