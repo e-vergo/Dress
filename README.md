@@ -4,7 +4,7 @@ Artifact generation for Lean 4 mathematical blueprints. Transforms `@[blueprint]
 
 ## Overview
 
-Dress is the artifact generation layer of the [Side-by-Side Blueprint](https://github.com/e-vergo/Side-By-Side-Blueprint) toolchain. It:
+Dress is the artifact generation layer of the [Side-by-Side Blueprint](https://github.com/e-vergo/Side-By-Side-Blueprint) formalization documentation toolchain. It:
 
 1. Intercepts `@[blueprint]` declarations during Lean elaboration
 2. Captures syntax highlighting via [SubVerso](https://github.com/e-vergo/subverso) while info trees are still available
@@ -24,10 +24,10 @@ SubVerso -> LeanArchitect -> Dress -> Runway
 
 | Component | Role |
 |-----------|------|
-| [SubVerso](https://github.com/e-vergo/subverso) | Extracts syntax highlighting and semantic information during elaboration |
+| [SubVerso](https://github.com/e-vergo/subverso) | Extracts syntax highlighting with O(1) indexed lookups via InfoTable |
 | [LeanArchitect](https://github.com/e-vergo/LeanArchitect) | Defines `@[blueprint]` attribute with 8 metadata and 3 manual status options |
-| Dress | Generates artifacts, computes statistics, validates graphs, performs layout |
-| [Runway](https://github.com/e-vergo/Runway) | Consumes Dress output to produce the final website |
+| Dress | Generates artifacts, computes statistics, validates graphs, performs Sugiyama layout |
+| [Runway](https://github.com/e-vergo/Runway) | Consumes Dress output to produce the final website, dashboard, and paper/PDF |
 
 ## Installation
 
@@ -397,10 +397,16 @@ Dress/
     Artifacts.lean     # Dressed artifact format
 
   Base64.lean          # RFC 4648 Base64 encoding
+  Content.lean         # BlueprintContent type for module contents
   Core.lean            # Core types, splitAtDefinitionAssign
+  Highlighting.lean    # SubVerso highlighting integration
   HtmlRender.lean      # Verso HTML rendering wrapper
   Hook.lean            # Main entry point, re-exports
+  Load.lean            # Loading nodes from environment
+  Output.lean          # LaTeX and JSON output functions
   Paths.lean           # Path utilities for artifact locations
+  Render.lean          # Rendering utilities
+  SubVersoExtract.lean # SubVerso extraction utilities
 
 Main.lean              # CLI executable (extract_blueprint)
 lakefile.lean          # Package definition with Lake facets
@@ -471,7 +477,7 @@ Runway loads:
 | [Runway](https://github.com/e-vergo/Runway) | Site generator (downstream) |
 | [LeanArchitect](https://github.com/e-vergo/LeanArchitect) | Blueprint attribute (upstream) |
 | [SubVerso](https://github.com/e-vergo/subverso) | Syntax highlighting (upstream) |
-| [SBS-Test](https://github.com/e-vergo/SBS-Test) | Minimal test project (25 nodes, all 6 statuses) |
+| [SBS-Test](https://github.com/e-vergo/SBS-Test) | Minimal test project (33 nodes, all 6 statuses) |
 | [dress-blueprint-action](https://github.com/e-vergo/dress-blueprint-action) | GitHub Actions CI solution |
 
 ## License
