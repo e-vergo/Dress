@@ -273,13 +273,16 @@ def renderLegend (config : SvgConfig) (_x _y : Float) : String := Id.run do
 
 /-- Generate complete SVG from a layout graph -/
 def render (layout : Layout.LayoutGraph) (config : SvgConfig := {}) : String := Id.run do
-  -- No extra width for legend - it's positioned at top-left overlaying the graph
+  -- Use the content bounding box for proper centering
+  -- viewBox uses (minX, minY) as origin so content is properly positioned
   let totalWidth := layout.width
   let totalHeight := layout.height
+  let viewBoxX := layout.minX
+  let viewBoxY := layout.minY
 
   let mut svg := s!"<svg xmlns=\"http://www.w3.org/2000/svg\" " ++
     s!"width=\"{totalWidth}\" height=\"{totalHeight}\" " ++
-    s!"viewBox=\"0 0 {totalWidth} {totalHeight}\">\n"
+    s!"viewBox=\"{viewBoxX} {viewBoxY} {totalWidth} {totalHeight}\">\n"
 
   -- Background
   svg := svg ++ s!"<rect width=\"100%\" height=\"100%\" fill=\"{config.backgroundColor}\"/>\n"

@@ -52,10 +52,14 @@ structure LayoutGraph where
   nodes : Array LayoutNode
   /-- Positioned edges -/
   edges : Array LayoutEdge
-  /-- Total width -/
+  /-- Total width (maxX - minX + padding) -/
   width : Float
-  /-- Total height -/
+  /-- Total height (maxY - minY + padding) -/
   height : Float
+  /-- Content bounding box minX (for viewBox positioning) -/
+  minX : Float := 0.0
+  /-- Content bounding box minY (for viewBox positioning) -/
+  minY : Float := 0.0
   deriving Repr, Inhabited
 
 /-- Layout configuration for top-to-bottom flow -/
@@ -1440,15 +1444,28 @@ def layout (g : Graph) (config : LayoutConfig := {}) : LayoutGraph := Id.run do
   -- Step 4: Create layout edges (includes isReversed flag)
   let (layoutEdges, _) := Algorithm.createLayoutEdges acyclicGraph config |>.run state
 
-  -- Calculate dimensions
-  let maxX := layoutNodes.foldl (fun acc n => max acc (n.x + n.width)) 0.0
-  let maxY := layoutNodes.foldl (fun acc n => max acc (n.y + n.height)) 0.0
+  -- Calculate content bounding box (minX, minY, maxX, maxY)
+  -- Initialize with first node if available, otherwise use 0
+  let (initMinX, initMinY, initMaxX, initMaxY) := match layoutNodes[0]? with
+    | some n => (n.x, n.y, n.x + n.width, n.y + n.height)
+    | none => (0.0, 0.0, 0.0, 0.0)
 
+  let (minX, minY, maxX, maxY) := layoutNodes.foldl (fun (accMinX, accMinY, accMaxX, accMaxY) n =>
+    (min accMinX n.x,
+     min accMinY n.y,
+     max accMaxX (n.x + n.width),
+     max accMaxY (n.y + n.height))
+  ) (initMinX, initMinY, initMaxX, initMaxY)
+
+  -- The viewBox will use (minX - padding, minY - padding) as origin
+  -- Width and height are content extent plus padding on both sides
   return {
     nodes := layoutNodes
     edges := layoutEdges
-    width := maxX + config.padding
-    height := maxY + config.padding
+    width := (maxX - minX) + 2 * config.padding
+    height := (maxY - minY) + 2 * config.padding
+    minX := minX - config.padding
+    minY := minY - config.padding
   }
 
 end Dress.Graph.Layout
