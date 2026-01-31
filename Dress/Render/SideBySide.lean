@@ -139,8 +139,9 @@ def renderLeanColumn (data : SbsData) : String :=
 
 /-- Render the LaTeX column (left side) for blueprint variant -/
 def renderLatexColumnBlueprint (data : SbsData) : String :=
-  let envType := data.envType
-  let displayLabel := data.displayNumber.getD data.label
+  -- Escape user-controlled values to prevent XSS
+  let envType := escapeHtml data.envType
+  let displayLabel := escapeHtml (data.displayNumber.getD data.label)
   let statusColor := statusToColor data.status
   let statusTitle := statusToDisplayString data.status
 
@@ -151,7 +152,7 @@ def renderLatexColumnBlueprint (data : SbsData) : String :=
   <div class=\"thm_header_extras {statusToCssClass data.status}\"><span class=\"status-dot header-status-dot\" style=\"background:{statusColor}\" title=\"Status: {statusTitle}\"></span></div>
 </div>"
 
-  -- Statement content
+  -- Statement content (statementHtml is pre-rendered LaTeX HTML, trusted)
   let statement := s!"<div class=\"{envType}_thmcontent\"><p>{data.statementHtml}</p></div>"
 
   -- Optional proof toggle
@@ -165,8 +166,9 @@ def renderLatexColumnBlueprint (data : SbsData) : String :=
 
 /-- Render the LaTeX column (left side) for paper variant -/
 def renderLatexColumnPaper (data : SbsData) (blueprintUrl : Option String) : String :=
-  let envType := data.envType
-  let displayLabel := data.displayNumber.getD data.label
+  -- Escape user-controlled values to prevent XSS
+  let envType := escapeHtml data.envType
+  let displayLabel := escapeHtml (data.displayNumber.getD data.label)
   let statusColor := statusToColor data.status
   let statusTitle := statusToDisplayString data.status
 
@@ -181,7 +183,7 @@ def renderLatexColumnPaper (data : SbsData) (blueprintUrl : Option String) : Str
   <span class=\"status-dot paper-status-dot\" style=\"background:{statusColor}\" title=\"Status: {statusTitle}\"></span>{blueprintLink}
 </div>"
 
-  -- Statement content (reuses same class for consistency)
+  -- Statement content (statementHtml is pre-rendered LaTeX HTML, trusted)
   let statement := s!"<div class=\"{envType}_thmcontent\"><p>{data.statementHtml}</p></div>"
 
   -- Optional proof toggle
@@ -201,7 +203,8 @@ def renderLatexColumn (data : SbsData) (variant : SbsVariant) : String :=
 
 /-- Main entry point: render complete side-by-side display -/
 def renderSideBySide (data : SbsData) (variant : SbsVariant) : String :=
-  let envType := data.envType
+  -- Escape user-controlled values to prevent XSS
+  let envType := escapeHtml data.envType
 
   -- Container class varies by variant
   let containerClass := match variant with

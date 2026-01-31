@@ -10,10 +10,27 @@ import Dress.Graph.Types
 Implements a simplified Sugiyama layered layout algorithm for
 rendering dependency graphs.
 
-The algorithm:
-1. Assign layers (longest path from sources)
-2. Order nodes within layers (barycenter heuristic)
-3. Assign coordinates
+## Algorithm Steps:
+1. Make graph acyclic (reverse back-edges)
+2. Assign layers (longest path from sources)
+3. Order nodes within layers (median heuristic + transpose)
+4. Assign coordinates (grid + iterative refinement)
+5. Route edges (visibility graph + Dijkstra)
+6. Normalize coordinates to start at origin
+
+## Performance Optimizations for Large Graphs (>100 nodes):
+- **Crossing reduction**: Reduced barycenter iterations (max 2), skip transpose heuristic
+  - Location: `orderLayers` function
+  - Rationale: Transpose is O(L × N × swaps) per call, called 2× per iteration
+
+- **Edge routing**: Skip visibility graph, use simple bezier curves
+  - Location: `createLayoutEdges` function
+  - Rationale: Visibility graph is O(V²) per edge, prohibitive for 500+ nodes
+
+These optimizations are triggered when `g.nodes.size > 100` (in the Sugiyama phases)
+or when `totalNodes > 100` (for layer-wide operations). The threshold was chosen
+to allow PNT (530 nodes) to render in reasonable time while maintaining quality
+for smaller graphs like GCR (57 nodes) and SBS-Test (25 nodes).
 -/
 
 namespace Dress.Graph.Layout
@@ -1415,7 +1432,11 @@ end Algorithm
 
 /-- Perform complete layout of a graph.
     First makes the graph acyclic by reversing back-edges (Graphviz approach),
-    then performs layered layout, then restores original edge directions for rendering. -/
+    then performs layered layout, then restores original edge directions for rendering.
+
+    The final coordinates are normalized so that content starts at (padding, padding),
+    with viewBox origin at (0, 0). This ensures the SVG displays correctly without
+    JavaScript compensation and centers properly in the viewport. -/
 def layout (g : Graph) (config : LayoutConfig := {}) : LayoutGraph := Id.run do
   -- Step 1: Make graph acyclic by reversing back-edges
   let (acyclicGraph, _reversedEdges) := makeAcyclic g
@@ -1427,7 +1448,18 @@ def layout (g : Graph) (config : LayoutConfig := {}) : LayoutGraph := Id.run do
     Algorithm.assignCoordinates acyclicGraph config
   ).run {}
 
-  -- Step 3: Create layout nodes with dynamic widths
+  -- Step 3: Calculate content bounding box from raw positions
+  let (initMinX, initMinY) := state.positions.fold (init := (1e18, 1e18)) fun (accMinX, accMinY) _ (x, y) =>
+    (min accMinX x, min accMinY y)
+
+  -- If no nodes, use (0, 0)
+  let (contentMinX, contentMinY) := if initMinX == 1e18 then (0.0, 0.0) else (initMinX, initMinY)
+
+  -- Step 4: Create layout nodes with NORMALIZED coordinates
+  -- Shift all positions so content starts at (padding, padding)
+  let offsetX := config.padding - contentMinX
+  let offsetY := config.padding - contentMinY
+
   let mut layoutNodes : Array LayoutNode := #[]
   for node in acyclicGraph.nodes do
     match state.positions.get? node.id with
@@ -1435,43 +1467,40 @@ def layout (g : Graph) (config : LayoutConfig := {}) : LayoutGraph := Id.run do
       let width := state.nodeWidths.get? node.id |>.getD (computeNodeWidth config node.label)
       layoutNodes := layoutNodes.push {
         node
-        x, y
+        x := x + offsetX
+        y := y + offsetY
         width
         height := config.nodeHeight
       }
     | none => pure ()
 
-  -- Step 4: Create layout edges (includes isReversed flag)
-  let (layoutEdges, _) := Algorithm.createLayoutEdges acyclicGraph config |>.run state
+  -- Step 5: Create normalized state for edge creation
+  -- Update positions with offset for edge routing calculations
+  let normalizedPositions := state.positions.fold (init := {}) fun acc nodeId (x, y) =>
+    acc.insert nodeId (x + offsetX, y + offsetY)
+  let normalizedState := { state with positions := normalizedPositions }
 
-  -- Calculate content bounding box (minX, minY, maxX, maxY)
-  -- Initialize with first node if available, otherwise use 0
-  let (initMinX, initMinY, initMaxX, initMaxY) := match layoutNodes[0]? with
-    | some n => (n.x, n.y, n.x + n.width, n.y + n.height)
-    | none => (0.0, 0.0, 0.0, 0.0)
+  -- Step 6: Create layout edges using normalized positions
+  let (layoutEdges, _) := Algorithm.createLayoutEdges acyclicGraph config |>.run normalizedState
 
-  let (contentMinX, contentMinY, contentMaxX, contentMaxY) := layoutNodes.foldl (fun (accMinX, accMinY, accMaxX, accMaxY) n =>
-    (min accMinX n.x,
-     min accMinY n.y,
-     max accMaxX (n.x + n.width),
-     max accMaxY (n.y + n.height))
-  ) (initMinX, initMinY, initMaxX, initMaxY)
+  -- Step 7: Calculate final bounding box (now content starts at padding)
+  let (finalMaxX, finalMaxY) := layoutNodes.foldl (fun (accMaxX, accMaxY) n =>
+    (max accMaxX (n.x + n.width), max accMaxY (n.y + n.height))
+  ) (0.0, 0.0)
 
-  -- The viewBox uses (contentMinX - padding, contentMinY - padding) as origin
-  -- This centers the content with padding on all sides
-  -- Width and height include padding on both sides of the content
-  let viewBoxMinX := contentMinX - config.padding
-  let viewBoxMinY := contentMinY - config.padding
-  let viewBoxWidth := (contentMaxX - contentMinX) + 2 * config.padding
-  let viewBoxHeight := (contentMaxY - contentMinY) + 2 * config.padding
+  -- ViewBox starts at (0, 0), dimensions include padding on all sides
+  -- Content is at [padding, finalMaxX] x [padding, finalMaxY]
+  -- Add padding to the right and bottom
+  let viewBoxWidth := finalMaxX + config.padding
+  let viewBoxHeight := finalMaxY + config.padding
 
   return {
     nodes := layoutNodes
     edges := layoutEdges
     width := viewBoxWidth
     height := viewBoxHeight
-    minX := viewBoxMinX
-    minY := viewBoxMinY
+    minX := 0.0  -- Normalized: viewBox always starts at origin
+    minY := 0.0
   }
 
 end Dress.Graph.Layout
