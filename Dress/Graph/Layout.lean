@@ -1450,22 +1450,28 @@ def layout (g : Graph) (config : LayoutConfig := {}) : LayoutGraph := Id.run do
     | some n => (n.x, n.y, n.x + n.width, n.y + n.height)
     | none => (0.0, 0.0, 0.0, 0.0)
 
-  let (minX, minY, maxX, maxY) := layoutNodes.foldl (fun (accMinX, accMinY, accMaxX, accMaxY) n =>
+  let (contentMinX, contentMinY, contentMaxX, contentMaxY) := layoutNodes.foldl (fun (accMinX, accMinY, accMaxX, accMaxY) n =>
     (min accMinX n.x,
      min accMinY n.y,
      max accMaxX (n.x + n.width),
      max accMaxY (n.y + n.height))
   ) (initMinX, initMinY, initMaxX, initMaxY)
 
-  -- The viewBox will use (minX - padding, minY - padding) as origin
-  -- Width and height are content extent plus padding on both sides
+  -- The viewBox uses (contentMinX - padding, contentMinY - padding) as origin
+  -- This centers the content with padding on all sides
+  -- Width and height include padding on both sides of the content
+  let viewBoxMinX := contentMinX - config.padding
+  let viewBoxMinY := contentMinY - config.padding
+  let viewBoxWidth := (contentMaxX - contentMinX) + 2 * config.padding
+  let viewBoxHeight := (contentMaxY - contentMinY) + 2 * config.padding
+
   return {
     nodes := layoutNodes
     edges := layoutEdges
-    width := (maxX - minX) + 2 * config.padding
-    height := (maxY - minY) + 2 * config.padding
-    minX := minX - config.padding
-    minY := minY - config.padding
+    width := viewBoxWidth
+    height := viewBoxHeight
+    minX := viewBoxMinX
+    minY := viewBoxMinY
   }
 
 end Dress.Graph.Layout
