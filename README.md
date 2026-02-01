@@ -1,18 +1,25 @@
 # Dress
 
+![Lean](https://img.shields.io/badge/Lean-v4.27.0-blue)
+![License](https://img.shields.io/badge/License-Apache%202.0-green)
+
+> **Prototype Status**: Alpha software with known bugs and incomplete features. Not yet production-ready.
+
 Artifact generation for Lean 4 mathematical blueprints. Transforms `@[blueprint]`-decorated declarations into syntax-highlighted HTML and LaTeX with interactive hovers, and builds dependency graphs with hierarchical layout.
 
 ## Overview
 
-Dress is the artifact generation layer of the [Side-by-Side Blueprint](https://github.com/e-vergo/Side-By-Side-Blueprint) formalization documentation toolchain. It:
+Dress is the artifact generation layer of the [Side-by-Side Blueprint](https://github.com/e-vergo/Side-By-Side-Blueprint) formalization documentation toolchain. It operates as the build-time phase, producing artifacts that Runway consumes for site generation.
 
-1. Intercepts `@[blueprint]` declarations during Lean elaboration
-2. Captures syntax highlighting via [SubVerso](https://github.com/e-vergo/subverso) while info trees are still available
-3. Renders HTML with rainbow bracket matching via [Verso](https://github.com/e-vergo/verso)
-4. Generates LaTeX with embedded hover data
-5. Builds dependency graphs with Sugiyama hierarchical layout
-6. Validates graph structure (connectivity, cycles)
-7. Computes status counts and `fullyProven` upgrades
+**Core responsibilities:**
+
+1. Intercept `@[blueprint]` declarations during Lean elaboration
+2. Capture syntax highlighting via [SubVerso](https://github.com/e-vergo/subverso) while info trees are available (93-99% of build time)
+3. Render HTML with rainbow bracket matching via [Verso](https://github.com/e-vergo/verso)
+4. Generate LaTeX with embedded hover data
+5. Build dependency graphs with Sugiyama hierarchical layout
+6. Validate graph structure (connectivity, cycles)
+7. Compute status counts and auto-upgrade nodes to `fullyProven`
 
 Dress re-exports [LeanArchitect](https://github.com/e-vergo/LeanArchitect), so importing Dress provides the `@[blueprint]` attribute.
 
@@ -26,21 +33,26 @@ SubVerso -> LeanArchitect -> Dress -> Runway
 |-----------|------|
 | [SubVerso](https://github.com/e-vergo/subverso) | Extracts syntax highlighting with O(1) indexed lookups via InfoTable |
 | [LeanArchitect](https://github.com/e-vergo/LeanArchitect) | Defines `@[blueprint]` attribute with 8 metadata and 3 manual status options |
-| Dress | Generates artifacts, computes statistics, validates graphs, performs Sugiyama layout |
+| **Dress** | Generates artifacts, computes statistics, validates graphs, performs Sugiyama layout |
 | [Runway](https://github.com/e-vergo/Runway) | Consumes Dress output to produce the final website, dashboard, and paper/PDF |
 
 ## Installation
 
-Add to `lakefile.lean`:
+Add to `lakefile.toml`:
 
-```lean
-require Dress from git "https://github.com/e-vergo/Dress" @ "main"
+```toml
+[[require]]
+name = "Dress"
+git = "https://github.com/e-vergo/Dress"
+rev = "main"
 ```
 
 For local development:
 
-```lean
-require Dress from ".." / "Dress"
+```toml
+[[require]]
+name = "Dress"
+path = "../Dress"
 ```
 
 ## Usage
@@ -87,9 +99,11 @@ lake build MyProject.MyModule:blueprint # Specific module
 lake exe extract_blueprint graph Module1 Module2 Module3
 ```
 
-## Build Pipeline
+This generates `dep-graph.svg`, `dep-graph.json`, and `manifest.json` in `.lake/build/dressed/`.
 
-Dress operates in three phases during the build process.
+## Two-Phase Build Architecture
+
+Dress operates in two distinct phases during the build process:
 
 ### Phase 1: Per-Declaration Capture (During Elaboration)
 
@@ -100,7 +114,11 @@ When Lean compiles with `BLUEPRINT_DRESS=1`, the `elab_rules` in `Capture/ElabRu
 3. Code splitting separates signature from proof body at the `:=` boundary
 4. Artifacts are written to `.lake/build/dressed/{Module/Path}/{sanitized-label}/`
 
-Info trees are ephemeral and only exist during elaboration, so highlighting must be captured immediately. This accounts for 93-99% of build time.
+**Why immediate capture?** Info trees are ephemeral and only exist during elaboration. They are discarded after elaboration completes, so highlighting must be captured immediately. This accounts for 93-99% of build time.
+
+**Timing breakdown** (typical per-declaration):
+- SubVerso highlighting: 800-6500ms (93-99%)
+- TeX/HTML generation: <30ms (<1%)
 
 ### Phase 2: Lake Facet Aggregation
 
@@ -113,7 +131,7 @@ After compilation, Lake facets aggregate per-declaration artifacts:
 | `blueprint` | Library | `library/{LibName}.tex` index with `\inputleanmodule` macro |
 | `depGraph` | Library | `dep-graph.svg` and `dep-graph.json` |
 
-### Phase 3: Manifest Generation
+### Phase 3: Manifest Generation (CLI)
 
 The `graph` subcommand performs final processing:
 
@@ -125,7 +143,7 @@ The `graph` subcommand performs final processing:
    - Edge deduplication removes duplicate (from, to) pairs
 4. Validates the graph (connectivity, cycle detection)
 5. Computes status counts and upgrades nodes to `fullyProven`
-6. Applies transitive reduction (skipped for >100 nodes)
+6. Applies transitive reduction (skipped for >100 nodes - O(n^3) Floyd-Warshall)
 7. Runs Sugiyama layout for hierarchical visualization
 8. Writes `dep-graph.svg`, `dep-graph.json`, and `manifest.json`
 
@@ -197,11 +215,11 @@ The `manifest.json` file contains precomputed data consumed by Runway:
 }
 ```
 
-Statistics are computed upstream in Dress. Runway loads `manifest.json` without recomputation, providing a soundness guarantee that displayed statistics match the actual graph state.
+**Soundness guarantee:** Statistics are computed upstream in Dress. Runway loads `manifest.json` without recomputation, ensuring displayed statistics match the actual graph state.
 
-## 6-Status Model
+## 6-Status Color Model
 
-Node status types are defined in LeanArchitect and re-exported by Dress:
+Node status types are defined in LeanArchitect and re-exported by Dress. The canonical hex values are defined in `Graph/Svg.lean`:
 
 | Status | Color | Hex | Source |
 |--------|-------|-----|--------|
@@ -220,6 +238,8 @@ Node status types are defined in LeanArchitect and re-exported by Dress:
 5. `sorry` (auto-detected)
 6. `proven` (auto-detected)
 7. `notReady` (default)
+
+**Color source of truth:** The hex values in `Graph/Svg.lean` are canonical. CSS variables in `common.css` must match these exactly.
 
 ### Node Shapes
 
@@ -345,6 +365,8 @@ def findComponents (g : Graph) : Array (Array String)
 - Multiple components may indicate missing dependencies or orphaned declarations
 - Results stored in `manifest.json` under `checks.numComponents` and `checks.componentSizes`
 
+**Motivation:** The Tao incident (January 2026) where disconnected final theorems were proven with AI-provided proofs that satisfied trivial versions of statements. Connectivity checks catch this class of errors.
+
 ### Cycle Detection (`detectCycles`)
 
 DFS with gray/black coloring (O(V+E) complexity):
@@ -407,6 +429,22 @@ The output uses CSS classes `lean-bracket-1` through `lean-bracket-6` for six di
 | `lean-bracket-5` | #50A14F | #70c16f |
 | `lean-bracket-6` | #E45649 | #f47669 |
 
+## SubVerso Integration
+
+Dress depends on a fork of SubVerso with O(1) indexed lookups via InfoTable:
+
+| Field | Purpose | Complexity |
+|-------|---------|------------|
+| `infoByExactPos` | HashMap for exact syntax position (start, end) | O(1) |
+| `termInfoByName` | HashMap for const/fvar by name | O(1) |
+| `nameSuffixIndex` | HashMap for suffix-based lookups | O(1) |
+| `allInfoSorted` | Sorted array for containment queries | O(n) worst |
+
+Additional caches in `HighlightState`:
+- `identKindCache`: Memoizes identifier classification by (position, name)
+- `signatureCache`: Memoizes pretty-printed type signatures by constant name
+- `hasTacticCache` / `childHasTacticCache`: Memoizes tactic info searches
+
 ## Module Structure
 
 ```
@@ -427,7 +465,7 @@ Dress/
     Build.lean         # Graph construction, validation, computeFullyProven
     Layout.lean        # Sugiyama algorithm, edge routing (~1500 lines)
     Json.lean          # JSON serialization for D3.js
-    Svg.lean           # SVG generation
+    Svg.lean           # SVG generation (canonical status colors)
 
   Render/
     SideBySide.lean    # Side-by-side display rendering
@@ -501,6 +539,14 @@ Runway loads:
 - Per-declaration artifacts from `.lake/build/dressed/{Module/Path}/`
 - `manifest.json` for dashboard data (precomputed, no recomputation)
 - `dep-graph.json` and `dep-graph.svg` for visualization
+
+## Environment Variable
+
+| Variable | Purpose |
+|----------|---------|
+| `BLUEPRINT_DRESS=1` | Enable artifact generation during `lake build` |
+
+When set, the `elab_rules` in `Capture/ElabRules.lean` intercept `@[blueprint]` declarations and write artifacts immediately after elaboration.
 
 ## Dependencies
 
