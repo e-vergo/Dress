@@ -568,6 +568,10 @@ JSON parsing handles legacy status values for compatibility with older manifests
 | [Verso](https://github.com/e-vergo/verso) | HTML rendering with rainbow bracket matching |
 | [Cli](https://github.com/mhuisi/lean4-cli) | Command-line interface |
 
+## Tooling
+
+For build commands, screenshot capture, compliance validation, archive management, and custom rubrics, see the [Archive & Tooling Hub](../archive/README.md).
+
 ## Related Documentation
 
 | Document | Purpose |
