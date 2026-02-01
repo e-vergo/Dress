@@ -26,7 +26,9 @@ Artifact generation for Lean 4 mathematical blueprints. Transforms `@[blueprint]
 
 ## Overview
 
-Dress is the artifact generation layer of the [Side-by-Side Blueprint](https://github.com/e-vergo/Side-By-Side-Blueprint) formalization documentation toolchain. It operates as the build-time phase, producing artifacts that Runway consumes for site generation.
+Dress is the artifact generation layer of the Side-by-Side Blueprint formalization documentation toolchain. It operates as the build-time phase, producing artifacts that Runway consumes for site generation.
+
+**Part of the [Side-by-Side Blueprint](https://github.com/e-vergo/Side-By-Side-Blueprint) monorepo.** When used independently, Dress is available at [github.com/e-vergo/Dress](https://github.com/e-vergo/Dress).
 
 **Core responsibilities:**
 
@@ -97,14 +99,17 @@ Output is written to `.lake/build/dressed/`.
 
 ```
 SubVerso -> LeanArchitect -> Dress -> Runway
+              |
+              +-> Verso (genres use SubVerso for highlighting)
 ```
 
-| Component | Role |
-|-----------|------|
-| [SubVerso](https://github.com/e-vergo/subverso) | Extracts syntax highlighting with O(1) indexed lookups via InfoTable |
-| [LeanArchitect](https://github.com/e-vergo/LeanArchitect) | Defines `@[blueprint]` attribute with 8 metadata and 3 manual status options |
-| **Dress** | Generates artifacts, computes statistics, validates graphs, performs Sugiyama layout |
-| [Runway](https://github.com/e-vergo/Runway) | Consumes Dress output to produce the final website, dashboard, and paper/PDF |
+| Component | Location | Role |
+|-----------|----------|------|
+| [SubVerso](../../forks/subverso/) | `forks/subverso/` | Extracts syntax highlighting with O(1) indexed lookups via InfoTable |
+| [LeanArchitect](../../forks/LeanArchitect/) | `forks/LeanArchitect/` | Defines `@[blueprint]` attribute with 8 metadata and 3 manual status options |
+| **Dress** | `toolchain/Dress/` | Generates artifacts, computes statistics, validates graphs, performs Sugiyama layout |
+| [Runway](../Runway/) | `toolchain/Runway/` | Consumes Dress output to produce the final website, dashboard, and paper/PDF |
+| [Verso](../../forks/verso/) | `forks/verso/` | Document framework with SBSBlueprint and VersoPaper genres |
 
 ## Two-Phase Build Architecture
 
@@ -561,34 +566,59 @@ JSON parsing handles legacy status values for compatibility with older manifests
 
 ## Dependencies
 
-| Dependency | Purpose |
-|------------|---------|
-| [LeanArchitect](https://github.com/e-vergo/LeanArchitect) | `@[blueprint]` attribute definition |
-| [SubVerso](https://github.com/e-vergo/subverso) | Syntax highlighting extraction with O(1) indexed lookups |
-| [Verso](https://github.com/e-vergo/verso) | HTML rendering with rainbow bracket matching |
-| [Cli](https://github.com/mhuisi/lean4-cli) | Command-line interface |
+| Dependency | Location | Purpose |
+|------------|----------|---------|
+| [LeanArchitect](../../forks/LeanArchitect/) | `forks/LeanArchitect/` | `@[blueprint]` attribute definition |
+| [SubVerso](../../forks/subverso/) | `forks/subverso/` | Syntax highlighting extraction with O(1) indexed lookups |
+| [Verso](../../forks/verso/) | `forks/verso/` | HTML rendering with rainbow bracket matching |
+| Cli | External | Command-line interface (mhuisi/lean4-cli)
 
-## Tooling
+## Local Development
 
-For build commands, screenshot capture, compliance validation, archive management, and custom rubrics, see the [Archive & Tooling Hub](../archive/README.md).
+When developing within the monorepo, use the shared build script:
+
+```bash
+# From a consumer project (e.g., SBS-Test)
+cd /Users/eric/GitHub/Side-By-Side-Blueprint/toolchain/SBS-Test
+python ../../dev/scripts/build.py
+
+# Or using the shell wrapper
+./scripts/build_blueprint.sh
+```
+
+The build script automatically:
+1. Commits and pushes changes to all repos (no skip option by design)
+2. Updates lake manifests
+3. Builds toolchain in dependency order (SubVerso -> LeanArchitect -> Dress -> Runway)
+4. Fetches mathlib cache
+5. Builds the project with `BLUEPRINT_DRESS=1`
+6. Generates dependency graph and manifest
+7. Generates site
+8. Starts a local server on port 8000
+
+See the [Archive & Tooling Hub](../../storage/README.md) for additional CLI commands.
 
 ## Related Documentation
 
 | Document | Purpose |
 |----------|---------|
-| [Side-by-Side Blueprint README](https://github.com/e-vergo/Side-By-Side-Blueprint) | Project overview |
-| [ARCHITECTURE.md](https://github.com/e-vergo/Side-By-Side-Blueprint/blob/main/ARCHITECTURE.md) | System architecture |
-| [GOALS.md](https://github.com/e-vergo/Side-By-Side-Blueprint/blob/main/GOALS.md) | Project vision |
+| [Side-by-Side Blueprint README](../../dev/markdowns/README.md) | Project overview |
+| [ARCHITECTURE.md](../../dev/markdowns/ARCHITECTURE.md) | System architecture |
+| [GOALS.md](../../dev/markdowns/GOALS.md) | Project vision |
+| [Detailed Architecture Reference](../../dev/.refs/ARCHITECTURE.md) | In-depth technical reference |
 
-## Related Repositories
+## Related Repositories (Monorepo)
 
-| Repository | Purpose |
-|------------|---------|
-| [Runway](https://github.com/e-vergo/Runway) | Site generator (downstream) |
-| [LeanArchitect](https://github.com/e-vergo/LeanArchitect) | Blueprint attribute (upstream) |
-| [SubVerso](https://github.com/e-vergo/subverso) | Syntax highlighting (upstream) |
-| [SBS-Test](https://github.com/e-vergo/SBS-Test) | Minimal test project (33 nodes, all 6 statuses) |
-| [dress-blueprint-action](https://github.com/e-vergo/dress-blueprint-action) | GitHub Actions CI solution |
+| Repository | Location | Purpose |
+|------------|----------|---------|
+| **Runway** | `toolchain/Runway/` | Site generator (downstream) |
+| **LeanArchitect** | `forks/LeanArchitect/` | Blueprint attribute (upstream) |
+| **SubVerso** | `forks/subverso/` | Syntax highlighting (upstream) |
+| **Verso** | `forks/verso/` | Document framework (upstream) |
+| **SBS-Test** | `toolchain/SBS-Test/` | Minimal test project (33 nodes, all 6 statuses) |
+| **dress-blueprint-action** | `toolchain/dress-blueprint-action/` | GitHub Actions CI solution + CSS/JS assets |
+| **GCR** | `showcase/General_Crystallographic_Restriction/` | Production example with paper (57 nodes) |
+| **PNT** | `showcase/PrimeNumberTheoremAnd/` | Large-scale integration (591 nodes) |
 
 ## License
 
