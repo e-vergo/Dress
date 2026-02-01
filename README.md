@@ -596,7 +596,7 @@ The build script automatically:
 7. Generates site
 8. Starts a local server on port 8000
 
-See the [Archive & Tooling Hub](../../storage/README.md) for additional CLI commands.
+See the [Archive & Tooling Hub](../../dev/storage/README.md) for additional CLI commands.
 
 ## Related Documentation
 
