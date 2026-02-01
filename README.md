@@ -7,6 +7,23 @@
 
 Artifact generation for Lean 4 mathematical blueprints. Transforms `@[blueprint]`-decorated declarations into syntax-highlighted HTML and LaTeX with interactive hovers, and builds dependency graphs with hierarchical layout.
 
+## Table of Contents
+
+- [Overview](#overview)
+- [Quick Start](#quick-start)
+- [Dependency Chain](#dependency-chain)
+- [Two-Phase Build Architecture](#two-phase-build-architecture)
+- [Artifact Format](#artifact-format)
+- [Manifest Schema](#manifest-schema)
+- [6-Status Color Model](#6-status-color-model)
+- [Graph Layout Algorithm](#graph-layout-algorithm)
+- [Validation Checks](#validation-checks)
+- [Rainbow Bracket Highlighting](#rainbow-bracket-highlighting)
+- [SubVerso Integration](#subverso-integration)
+- [Module Structure](#module-structure)
+- [CLI Reference](#cli-reference)
+- [Integration with Runway](#integration-with-runway)
+
 ## Overview
 
 Dress is the artifact generation layer of the [Side-by-Side Blueprint](https://github.com/e-vergo/Side-By-Side-Blueprint) formalization documentation toolchain. It operates as the build-time phase, producing artifacts that Runway consumes for site generation.
@@ -21,24 +38,15 @@ Dress is the artifact generation layer of the [Side-by-Side Blueprint](https://g
 6. Validate graph structure (connectivity, cycles)
 7. Compute status counts and auto-upgrade nodes to `fullyProven`
 
+**Why validation matters:** The Tao incident (January 2026) demonstrated that a proof can typecheck while proving something entirely different from what was intended. When Terence Tao reviewed the PNT+ blueprint graph, he noticed disconnected final theorems - AI-provided proofs had satisfied trivial versions of statements. Dress's connectivity validation catches this class of errors automatically.
+
 Dress re-exports [LeanArchitect](https://github.com/e-vergo/LeanArchitect), so importing Dress provides the `@[blueprint]` attribute.
 
-## Dependency Chain
+## Quick Start
 
-```
-SubVerso -> LeanArchitect -> Dress -> Runway
-```
+### 1. Add Dependency
 
-| Component | Role |
-|-----------|------|
-| [SubVerso](https://github.com/e-vergo/subverso) | Extracts syntax highlighting with O(1) indexed lookups via InfoTable |
-| [LeanArchitect](https://github.com/e-vergo/LeanArchitect) | Defines `@[blueprint]` attribute with 8 metadata and 3 manual status options |
-| **Dress** | Generates artifacts, computes statistics, validates graphs, performs Sugiyama layout |
-| [Runway](https://github.com/e-vergo/Runway) | Consumes Dress output to produce the final website, dashboard, and paper/PDF |
-
-## Installation
-
-Add to `lakefile.toml`:
+In your `lakefile.toml`:
 
 ```toml
 [[require]]
@@ -55,9 +63,7 @@ name = "Dress"
 path = "../Dress"
 ```
 
-## Usage
-
-### 1. Mark Declarations
+### 2. Mark Declarations
 
 ```lean
 import Dress  -- Re-exports @[blueprint] from LeanArchitect
@@ -72,34 +78,33 @@ theorem keyTheorem : P := by sorry
 def square (n : Nat) : Nat := n * n
 ```
 
-### 2. Build with Artifact Generation
-
-Enable dress mode via environment variable:
+### 3. Build with Artifact Generation
 
 ```bash
+# Enable dress mode via environment variable
 BLUEPRINT_DRESS=1 lake build
+
+# Generate Lake facets
+lake build :blueprint
+
+# Generate dependency graph and manifest
+lake exe extract_blueprint graph MyProject.Module1 MyProject.Module2
 ```
 
-Or via marker file:
+Output is written to `.lake/build/dressed/`.
 
-```bash
-lake run dress
+## Dependency Chain
+
+```
+SubVerso -> LeanArchitect -> Dress -> Runway
 ```
 
-### 3. Generate Lake Facets
-
-```bash
-lake build :blueprint                   # All modules
-lake build MyProject.MyModule:blueprint # Specific module
-```
-
-### 4. Generate Dependency Graph and Manifest
-
-```bash
-lake exe extract_blueprint graph Module1 Module2 Module3
-```
-
-This generates `dep-graph.svg`, `dep-graph.json`, and `manifest.json` in `.lake/build/dressed/`.
+| Component | Role |
+|-----------|------|
+| [SubVerso](https://github.com/e-vergo/subverso) | Extracts syntax highlighting with O(1) indexed lookups via InfoTable |
+| [LeanArchitect](https://github.com/e-vergo/LeanArchitect) | Defines `@[blueprint]` attribute with 8 metadata and 3 manual status options |
+| **Dress** | Generates artifacts, computes statistics, validates graphs, performs Sugiyama layout |
+| [Runway](https://github.com/e-vergo/Runway) | Consumes Dress output to produce the final website, dashboard, and paper/PDF |
 
 ## Two-Phase Build Architecture
 
@@ -548,6 +553,12 @@ Runway loads:
 
 When set, the `elab_rules` in `Capture/ElabRules.lean` intercept `@[blueprint]` declarations and write artifacts immediately after elaboration.
 
+## Backwards Compatibility
+
+JSON parsing handles legacy status values for compatibility with older manifests:
+- `"stated"` maps to `.notReady`
+- `"inMathlib"` maps to `.mathlibReady`
+
 ## Dependencies
 
 | Dependency | Purpose |
@@ -556,6 +567,14 @@ When set, the `elab_rules` in `Capture/ElabRules.lean` intercept `@[blueprint]` 
 | [SubVerso](https://github.com/e-vergo/subverso) | Syntax highlighting extraction with O(1) indexed lookups |
 | [Verso](https://github.com/e-vergo/verso) | HTML rendering with rainbow bracket matching |
 | [Cli](https://github.com/mhuisi/lean4-cli) | Command-line interface |
+
+## Related Documentation
+
+| Document | Purpose |
+|----------|---------|
+| [Side-by-Side Blueprint README](https://github.com/e-vergo/Side-By-Side-Blueprint) | Project overview |
+| [ARCHITECTURE.md](https://github.com/e-vergo/Side-By-Side-Blueprint/blob/main/ARCHITECTURE.md) | System architecture |
+| [GOALS.md](https://github.com/e-vergo/Side-By-Side-Blueprint/blob/main/GOALS.md) | Project vision |
 
 ## Related Repositories
 
