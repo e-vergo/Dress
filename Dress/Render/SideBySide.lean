@@ -93,6 +93,32 @@ def capitalize (s : String) : String :=
   | [] => s
   | c :: cs => String.ofList (c.toUpper :: cs)
 
+/-- Convert NodeStatus to verification badge CSS class -/
+def statusToBadgeClass : NodeStatus → String
+  | .proven | .fullyProven | .mathlibReady => "verified"
+  | .sorry | .ready => "in-progress"
+  | .notReady => "not-started"
+
+/-- Convert NodeStatus to verification badge label text -/
+def statusToBadgeLabel : NodeStatus → String
+  | .proven | .fullyProven | .mathlibReady => "Verified"
+  | .sorry | .ready => "In Progress"
+  | .notReady => "Not Started"
+
+/-- Convert NodeStatus to badge icon class suffix -/
+def statusToBadgeIcon : NodeStatus → String
+  | .proven | .fullyProven | .mathlibReady => "check"
+  | .sorry | .ready => "half"
+  | .notReady => "circle"
+
+/-- Render a verification badge for paper mode.
+    Produces HTML matching `.verification-badge` CSS in paper.css. -/
+def renderVerificationBadge (status : NodeStatus) : String :=
+  let cls := statusToBadgeClass status
+  let icon := statusToBadgeIcon status
+  let label := statusToBadgeLabel status
+  s!"<span class=\"verification-badge {cls}\" title=\"Formalization status\"><span class=\"badge-icon badge-icon-{icon}\"></span><span class=\"badge-text\">{label}</span></span>"
+
 /-! ## Rendering Functions -/
 
 /-- Render the collapsible proof toggle (LaTeX proof) -/
@@ -169,18 +195,19 @@ def renderLatexColumnPaper (data : SbsData) (blueprintUrl : Option String) : Str
   -- Escape user-controlled values to prevent XSS
   let envType := escapeHtml data.envType
   let displayLabel := escapeHtml (data.displayNumber.getD data.label)
-  let statusColor := statusToColor data.status
-  let statusTitle := statusToDisplayString data.status
 
   -- Blueprint link if URL provided
   let blueprintLink := match blueprintUrl with
     | some url => s!" <a class=\"blueprint-link\" href=\"{escapeHtml url}\">[blueprint]</a>"
     | none => ""
 
-  -- Paper-style heading with status dot (no badge wrapper, just dot + link)
+  -- Verification badge (replaces status dot for paper mode)
+  let badge := renderVerificationBadge data.status
+
+  -- Paper-style heading with verification badge + blueprint link
   let heading := s!"<div class=\"paper-theorem-header\">
   <span class=\"paper-theorem-type\">{capitalize envType} {displayLabel}</span>
-  <span class=\"status-dot paper-status-dot\" style=\"background:{statusColor}\" title=\"Status: {statusTitle}\"></span>{blueprintLink}
+  {badge}{blueprintLink}
 </div>"
 
   -- Statement content (statementHtml is pre-rendered LaTeX HTML, trusted)
