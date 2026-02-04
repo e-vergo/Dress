@@ -233,16 +233,14 @@ def renderSideBySide (data : SbsData) (variant : SbsVariant) : String :=
   -- Escape user-controlled values to prevent XSS
   let envType := escapeHtml data.envType
 
-  -- Container class varies by variant
+  -- Container class varies by variant - both use sbs-container for side-by-side layout
   let containerClass := match variant with
     | .blueprint => s!"{envType}_thmwrapper sbs-container theorem-style-{envType}"
-    | .paper _ => s!"paper-theorem paper-{envType}"  -- No sbs-container for paper (single column)
+    | .paper _ => s!"paper-theorem paper-{envType} sbs-container"
 
   let latexCol := renderLatexColumn data variant
-  -- Paper mode: don't show Lean code column
-  let leanCol := match variant with
-    | .blueprint => renderLeanColumn data
-    | .paper _ => ""
+  -- Both blueprint and paper mode show Lean code column
+  let leanCol := renderLeanColumn data
 
   s!"<div id=\"{escapeHtml data.id}\" class=\"{containerClass}\">
 {latexCol}
