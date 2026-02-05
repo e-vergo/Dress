@@ -40,7 +40,7 @@ namespace Dress.Generate
 private def generateArtifacts (name : Name) (node : Architect.Node)
     (highlighting : Option Highlighted) (file : Option System.FilePath)
     (location : Option DeclarationRange) (buildDir : System.FilePath)
-    (moduleName : Name) (label : String) (declDir : System.FilePath)
+    (moduleName : Name) (label : String)
     : CommandElabM Unit := do
   -- Time: Generate .tex content
   let texGenStart ← IO.monoMsNow
@@ -144,7 +144,7 @@ def writeDeclarationArtifactsFromNode (name : Name) (node : Architect.Node)
     -- Cache miss: generate artifacts
     trace[blueprint.debug] "Cache miss for {name} (hash: {hash})"
     IO.FS.createDirAll declDir
-    generateArtifacts name node highlighting file location buildDir moduleName label declDir
+    generateArtifacts name node highlighting file location buildDir moduleName label
     -- Save to cache for future builds
     Cache.saveToCache buildDir hash declDir
     trace[blueprint.debug] "Saved {declDir} to cache"
