@@ -8,6 +8,7 @@ import Dress.Paths
 import Dress.HtmlRender
 import Dress.Base64
 import Dress.Generate.Latex
+import Dress.Cache
 import Architect.Basic
 
 /-!
@@ -22,6 +23,11 @@ Each @[blueprint] declaration gets its own subdirectory:
 ## Output Location
 
 All artifacts are written to `.lake/build/dressed/{Module/Path}/{sanitized-label}/`.
+
+## Caching
+
+Artifacts are cached based on content hash. On cache hit, artifacts are restored
+from `.lake/build/dressed/.decl_cache/{hash}/` instead of being regenerated.
 -/
 
 open Lean Elab Command
@@ -29,29 +35,13 @@ open SubVerso.Highlighting
 
 namespace Dress.Generate
 
-/-- Write all artifacts (.tex, .html, .json) for a single @[blueprint] declaration using Architect.Node.
-    This function reads from the LeanArchitect environment extension instead of re-parsing.
-
-    @param name The fully qualified declaration name
-    @param node The Architect.Node from blueprintExt
-    @param highlighting Optional SubVerso highlighted code
-    @param file Optional source file path
-    @param location Optional declaration position range -/
-def writeDeclarationArtifactsFromNode (name : Name) (node : Architect.Node)
-    (highlighting : Option Highlighted) (file : Option System.FilePath) (location : Option DeclarationRange)
+/-- Generate all artifacts (.tex, .html, .json) for a declaration (no caching).
+    This is the core generation logic, called on cache miss. -/
+private def generateArtifacts (name : Name) (node : Architect.Node)
+    (highlighting : Option Highlighted) (file : Option System.FilePath)
+    (location : Option DeclarationRange) (buildDir : System.FilePath)
+    (moduleName : Name) (label : String) (declDir : System.FilePath)
     : CommandElabM Unit := do
-  -- Get build directory and module name
-  let buildDir : System.FilePath := ".lake" / "build"
-  let env ← getEnv
-  let moduleName := env.header.mainModule
-
-  -- Use the LaTeX label from the node
-  let label := node.latexLabel
-
-  -- Get declaration directory and create it
-  let declDir := Paths.getDeclarationDir buildDir moduleName label
-  IO.FS.createDirAll declDir
-
   -- Time: Generate .tex content
   let texGenStart ← IO.monoMsNow
   let texContent ← generateDeclarationTexFromNode name node highlighting none file location
@@ -115,6 +105,49 @@ def writeDeclarationArtifactsFromNode (name : Name) (node : Architect.Node)
   trace[blueprint.timing] "  htmlWrite: {htmlWriteTime}ms for {name}"
   trace[blueprint.timing] "  jsonWrite: {jsonWriteEnd - jsonWriteStart}ms for {name}"
   trace[blueprint.timing] "  manifestWrite: {manifestWriteEnd - manifestWriteStart}ms for {name}"
+
+/-- Write all artifacts (.tex, .html, .json) for a single @[blueprint] declaration using Architect.Node.
+    This function reads from the LeanArchitect environment extension instead of re-parsing.
+
+    Uses content-based caching: on cache hit, artifacts are restored from cache;
+    on cache miss, artifacts are generated and saved to cache.
+
+    @param name The fully qualified declaration name
+    @param node The Architect.Node from blueprintExt
+    @param highlighting Optional SubVerso highlighted code
+    @param file Optional source file path
+    @param location Optional declaration position range -/
+def writeDeclarationArtifactsFromNode (name : Name) (node : Architect.Node)
+    (highlighting : Option Highlighted) (file : Option System.FilePath) (location : Option DeclarationRange)
+    : CommandElabM Unit := do
+  -- Get build directory and module name
+  let buildDir : System.FilePath := ".lake" / "build"
+  let env ← getEnv
+  let moduleName := env.header.mainModule
+
+  -- Use the LaTeX label from the node
+  let label := node.latexLabel
+
+  -- Get declaration directory
+  let declDir := Paths.getDeclarationDir buildDir moduleName label
+
+  -- Compute content hash for caching
+  let hash ← Cache.computeDeclarationHash name node highlighting file location
+
+  -- Check cache
+  if ← Cache.checkCache buildDir hash then
+    -- Cache hit: restore from cache
+    trace[blueprint.debug] "Cache hit for {name} (hash: {hash})"
+    Cache.restoreFromCache buildDir hash declDir
+    trace[blueprint.debug] "Restored {declDir} from cache"
+  else
+    -- Cache miss: generate artifacts
+    trace[blueprint.debug] "Cache miss for {name} (hash: {hash})"
+    IO.FS.createDirAll declDir
+    generateArtifacts name node highlighting file location buildDir moduleName label declDir
+    -- Save to cache for future builds
+    Cache.saveToCache buildDir hash declDir
+    trace[blueprint.debug] "Saved {declDir} to cache"
 
 end Dress.Generate
 

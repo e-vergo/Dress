@@ -27,6 +27,9 @@ import Dress.Generate.Latex
 import Dress.Generate.Module
 import Dress.Generate.Declaration
 
+-- Cache: Per-declaration content caching
+import Dress.Cache
+
 -- Main entry point (re-exports from submodules)
 import Dress.Hook
 
