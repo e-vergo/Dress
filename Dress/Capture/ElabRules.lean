@@ -10,6 +10,7 @@ import Dress.Capture.State
 import Dress.Capture.InfoTree
 import Dress.Capture.Config
 import Dress.Generate.Declaration
+import Dress.Extract
 import Architect.Basic
 
 /-!
@@ -135,7 +136,34 @@ def elabDeclAndCaptureHighlighting (stx : Syntax) (declId : Syntax) (_mods : Opt
           match Architect.blueprintExt.find? env resolvedName with
           | some node =>
             try
-              trace[blueprint] "Node for {resolvedName}: label={node.latexLabel}, statement.text={node.statement.text.take 50}, proof={node.proof.isSome}, latexEnv={node.statement.latexEnv}"
+              -- Enrich node with delimiter-extracted TeX if statement.text is empty
+              let enrichedNode ← do
+                if !node.statement.text.isEmpty then
+                  pure node
+                else
+                  let file := (← read).fileName
+                  let sourceContent ← IO.FS.readFile ⟨file⟩
+                  let delimiterBlocks := Extract.extractDelimiters sourceContent
+                  if delimiterBlocks.isEmpty then
+                    pure node
+                  else
+                    -- Use syntax position for byte offset (DeclarationRange.pos only has line/col)
+                    match stx.getPos? with
+                    | some syntaxPos =>
+                      let declByteIdx := syntaxPos.byteIdx
+                      -- Find nearest preceding delimiter block
+                      let mut bestContent : Option String := none
+                      for block in delimiterBlocks do
+                        if block.pos < declByteIdx then
+                          bestContent := some block.content
+                      match bestContent with
+                      | some content =>
+                        trace[blueprint] "Enriched {resolvedName} with delimiter TeX ({content.length} chars)"
+                        pure (Extract.enrichNodeWithDelimiter node (some content) "both")
+                      | none => pure node
+                    | none => pure node
+
+              trace[blueprint] "Node for {resolvedName}: label={enrichedNode.latexLabel}, statement.text={enrichedNode.statement.text.take 50}, proof={enrichedNode.proof.isSome}, latexEnv={enrichedNode.statement.latexEnv}"
 
               -- Get highlighting from extension (just captured above)
               let highlighting := dressedDeclExt.getState env |>.find? resolvedName
@@ -150,7 +178,7 @@ def elabDeclAndCaptureHighlighting (stx : Syntax) (declId : Syntax) (_mods : Opt
               -- Time the writeDeclarationArtifactsFromNode operation
               let writeStart ← IO.monoMsNow
               -- Write all artifacts (.tex, .html, .json) using the Node-based function
-              Generate.writeDeclarationArtifactsFromNode resolvedName node highlighting (some file) (location.map (·.range))
+              Generate.writeDeclarationArtifactsFromNode resolvedName enrichedNode highlighting (some file) (location.map (·.range))
               let writeEnd ← IO.monoMsNow
               let writeTime := writeEnd - writeStart
 
@@ -160,7 +188,7 @@ def elabDeclAndCaptureHighlighting (stx : Syntax) (declId : Syntax) (_mods : Opt
               trace[blueprint.timing] "writeArtifacts: {writeTime}ms for {resolvedName}"
               trace[blueprint.timing] "TOTAL: {totalTime}ms for {resolvedName}"
 
-              trace[blueprint] "Wrote artifacts for {resolvedName} with label {node.latexLabel}"
+              trace[blueprint] "Wrote artifacts for {resolvedName} with label {enrichedNode.latexLabel}"
             catch e =>
               trace[blueprint.debug] "Failed to write declaration artifacts: {e.toMessageData}"
           | none =>
