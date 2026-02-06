@@ -28,7 +28,7 @@ Artifact generation for Lean 4 mathematical blueprints. Transforms `@[blueprint]
 
 Dress is the artifact generation layer of the Side-by-Side Blueprint formalization documentation toolchain. It operates as the build-time phase, producing artifacts that Runway consumes for site generation.
 
-**Part of the [Side-by-Side Blueprint](https://github.com/e-vergo/Side-By-Side-Blueprint) monorepo.** When used independently, Dress is available at [github.com/e-vergo/Dress](https://github.com/e-vergo/Dress).
+**Part of the [Side-by-Side Blueprint](https://github.com/e-vergo/SLS-Strange-Loop-Station) monorepo.** When used independently, Dress is available at [github.com/e-vergo/Dress](https://github.com/e-vergo/Dress).
 
 **Core responsibilities:**
 
