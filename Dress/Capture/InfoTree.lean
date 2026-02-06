@@ -74,6 +74,39 @@ def getOrCreateModuleCacheRef : IO (IO.Ref ModuleHighlightCache) := do
     moduleCacheRef.set (some ref)
     return ref
 
+/-! ## Incremental Capture State -/
+
+/-- Tracks statistics for the incremental highlighting pipeline within a module.
+    Used for profiling and understanding cache effectiveness. -/
+structure IncrementalCaptureState where
+  /-- Total declarations processed in this module -/
+  declsProcessed : Nat := 0
+  /-- Declarations served from cache (type hash matched) -/
+  declsFromCache : Nat := 0
+  /-- Declarations that required fresh highlighting (cache miss or hash mismatch) -/
+  declsReHighlighted : Nat := 0
+deriving Inhabited, Repr
+
+/-- Module-level incremental capture statistics. Reset at module boundaries. -/
+initialize incrementalStateRef : IO.Ref IncrementalCaptureState ←
+  IO.mkRef (default : IncrementalCaptureState)
+
+/-- Get current incremental capture statistics. -/
+def getIncrementalStats : IO IncrementalCaptureState :=
+  incrementalStateRef.get
+
+/-- Reset all module-level caches. Call at module boundaries to prevent stale
+    data from one module leaking into the next.
+
+    Clears:
+    - `moduleSuffixIndexRef` (suffix index)
+    - `moduleCacheRef` (highlight cache with type hashes)
+    - `incrementalStateRef` (capture statistics) -/
+def resetModuleCaches : IO Unit := do
+  moduleSuffixIndexRef.set none
+  moduleCacheRef.set none
+  incrementalStateRef.set (default : IncrementalCaptureState)
+
 /-! ## Core Capture Functions -/
 
 /-- Capture SubVerso highlighting from info trees for a given syntax.
@@ -110,6 +143,45 @@ def captureHighlightingFromInfoTrees
     -- declarations (e.g., those with term-mode proofs or certain macro-generated syntax).
     -- Silently fail - highlighting is an optional enhancement.
     return none
+
+/-- Lazy variant of `captureHighlightingFromInfoTrees` that checks the module-level
+    cache before performing full highlighting.
+
+    Uses `lazyHighlightIncludingUnparsed` to:
+    - Return cached highlighting if the declaration's type hash is unchanged
+    - Perform fresh highlighting on cache miss or type hash mismatch
+    - Track incremental statistics for profiling
+
+    Returns the `HighlightResult` indicating whether the result was cached, fresh, or skipped.
+-/
+def lazyCaptureHighlightingFromInfoTrees
+    (stx : Syntax)
+    (messages : Array Message)
+    (trees : PersistentArray InfoTree)
+    (declName : Name)
+    (suppressedNamespaces : List Name := [])
+    : TermElabM HighlightResult := do
+  if trees.isEmpty then
+    return HighlightResult.skipped
+  try
+    -- Get module-level caches for cross-declaration amortization
+    let suffixIndex ← getOrBuildSuffixIndex (← getEnv)
+    let cacheRef ← getOrCreateModuleCacheRef
+    let result ← lazyHighlightIncludingUnparsed stx messages trees declName
+      suppressedNamespaces
+      (prebuiltSuffixIndex? := some suffixIndex)
+      (moduleCacheRef? := some cacheRef)
+    -- Update incremental statistics
+    let stats ← incrementalStateRef.get
+    let stats := { stats with declsProcessed := stats.declsProcessed + 1 }
+    let stats := match result with
+      | HighlightResult.cached _ => { stats with declsFromCache := stats.declsFromCache + 1 }
+      | HighlightResult.fresh _ => { stats with declsReHighlighted := stats.declsReHighlighted + 1 }
+      | HighlightResult.skipped => stats
+    incrementalStateRef.set stats
+    return result
+  catch _ =>
+    return HighlightResult.skipped
 
 /-- Capture highlighting for a declaration using current command state.
 
@@ -150,17 +222,19 @@ def captureHighlighting (declName : Name) (stx : Syntax) : CommandElabM Unit := 
         | _, _ => false
     let msgFilterEnd ← IO.monoMsNow
 
-    -- Time: SubVerso highlighting extraction
+    -- Time: SubVerso highlighting extraction (lazy/incremental path)
     let subversoStart ← IO.monoMsNow
-    let hl? ← liftTermElabM do
-      captureHighlightingFromInfoTrees stx messages trees []
+    let result ← liftTermElabM do
+      lazyCaptureHighlightingFromInfoTrees stx messages trees declName []
     let subversoEnd ← IO.monoMsNow
 
     -- Print timing breakdown for captureHighlighting internals (only when trace option enabled)
     trace[blueprint.timing] "  msgFilter: {msgFilterEnd - msgFilterStart}ms for {declName}"
     trace[blueprint.timing] "  subversoHighlight: {subversoEnd - subversoStart}ms for {declName}"
+    if result.isCached then
+      trace[blueprint.timing] "  (served from cache) for {declName}"
 
-    match hl? with
+    match result.toHighlighted? with
     | some hl =>
       -- Store in environment extension
       modifyEnv fun env => addHighlighting env declName hl
@@ -180,5 +254,7 @@ abbrev dressedDeclExt := Capture.dressedDeclExt
 abbrev getModuleHighlighting := Capture.getModuleHighlighting
 abbrev addHighlighting := Capture.addHighlighting
 abbrev captureHighlighting := Capture.captureHighlighting
+abbrev resetModuleCaches := Capture.resetModuleCaches
+abbrev getIncrementalStats := Capture.getIncrementalStats
 
 end Dress
