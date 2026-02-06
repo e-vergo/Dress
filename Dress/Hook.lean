@@ -75,8 +75,8 @@ theorem my_theorem : ... := by
   ...
 ```
 
-Run `lake run dress` to generate dressed artifacts. No explicit command is needed
-in source files - export happens automatically when the marker file is present.
+Run `lake build` to generate dressed artifacts. Artifact writing is automatic
+for all `@[blueprint]` declarations -- no special environment variables or commands needed.
 -/
 
 open Lean Elab Command Term Meta

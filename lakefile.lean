@@ -447,39 +447,6 @@ package_facet depGraph (pkg : Package) : Unit := do
   let _ ← libJobs.await
   return .nil
 
-/-! ## Utility Script -/
-
-open IO.Process in
-/-- Run a command, print all outputs, and throw an error if it fails. -/
-private def runCmd (cmd : String) (args : Array String) : ScriptM Unit := do
-  let child ← spawn { cmd, args, stdout := .inherit, stderr := .inherit, stdin := .null }
-  let exitCode ← child.wait
-  if exitCode != 0 then
-    throw <| IO.userError s!"Error running command {cmd} {args.toList}"
-
-/-- Build the project with dressed artifact generation enabled.
-
-    This creates a `.lake/build/.dress` marker file, then runs `lake build`.
-    Hook.lean detects this marker and automatically exports dressed artifacts
-    (highlighting, HTML, .tex) for all `@[blueprint]` declarations.
-
-    Usage: `lake run dress` or `lake run dress MyLib`
-
-    The dressed artifacts are written to:
-    - `.lake/build/dressed/{Module/Path}/{sanitized-label}/decl.json` (per-declaration)
-    - `.lake/build/dressed/{Module/Path}/{sanitized-label}/decl.tex` (per-declaration LaTeX)
-    - `.lake/build/dressed/{Module/Path}/{sanitized-label}/decl.html` (per-declaration HTML)
-    - `.lake/build/dressed/{Module/Path}/module.json` (aggregated by dressed facet)
-    - `.lake/build/dressed/{Module/Path}/module.tex` (by blueprint facet) -/
-script dress (args : List String) do
-  let lake ← getLake
-  -- Create marker file to signal dress mode to Hook.lean
-  let markerFile : System.FilePath := ".lake" / "build" / ".dress"
-  IO.FS.createDirAll markerFile.parent.get!
-  IO.FS.writeFile markerFile "1"
-  -- Run build
-  let buildArgs := args.toArray
-  runCmd lake.toString (#["build"] ++ buildArgs)
-  -- Clean up marker file
-  IO.FS.removeFile markerFile
-  return 0
+-- Note: The `script dress` block and its `runCmd` helper were removed in #247.
+-- Dress artifact writing is now unconditional for @[blueprint] declarations.
+-- `lake build` alone produces all dressed artifacts -- no marker file or env var needed.

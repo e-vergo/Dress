@@ -34,40 +34,11 @@ open SubVerso.Highlighting
 
 namespace Dress.Capture
 
-/-! ## Blueprint Option for Dressing -/
-
-/-- Option to enable dressing during `lake build dress`.
-    When true, `#dress` will register a finalization hook to export dressed artifacts. -/
-register_option blueprint.dress : Bool := {
-  defValue := false
-  descr := "Enable dressed artifact generation (set by `lake build dress`)"
-}
-
-/-! ## Dress Command -/
-
-/-- Optional manual trigger for dressing.
-    With `blueprint.dress=true`, export happens automatically after each `@[blueprint]` declaration,
-    so this command is typically not needed. -/
-syntax (name := dress) "#dress" : command
-
-/-- IO.Ref to track if #dress has been called in this module. -/
-initialize dressEnabledRef : IO.Ref Bool ← IO.mkRef false
-
-@[command_elab dress]
-def elabDress : CommandElab := fun _stx => do
-  -- Skip if dress mode is not enabled (regular `lake build`)
-  unless blueprint.dress.get (← getOptions) do return
-  -- Also skip if highlighting is disabled
-  unless blueprint.highlighting.get (← getOptions) do return
-
-  -- Mark this module as requiring dressing
-  dressEnabledRef.set true
-  trace[blueprint] "#dress: Module marked for dressing"
-
-/-- Check if dressing is enabled for the current module.
-    Returns true if `#dress` was called AND `blueprint.dress` option is true. -/
-def isDressEnabled : IO Bool := do
-  dressEnabledRef.get
+-- Note: `register_option blueprint.dress`, the `#dress` command, and `isDressEnabled`
+-- were removed as part of the always-active Dress integration (#247).
+-- Artifact writing is now unconditional for @[blueprint] declarations.
+-- The BLUEPRINT_DRESS env var, blueprint.dress option, and .dress marker file
+-- are no longer checked.
 
 /-! ## Declaration Interception Helpers -/
 
@@ -95,8 +66,8 @@ def withCaptureHookFlag (act : CommandElabM α) : CommandElabM α := do
 /-- Elaborate a declaration command and capture highlighting for blueprint declarations.
     This helper is called by the elab_rules below.
 
-    When `blueprint.dress=true`, automatically exports dressed artifacts after each capture.
-    This allows `lake build dress` to work without requiring `#dress` in each source file.
+    Automatically captures SubVerso highlighting and writes dressed artifacts
+    (`.tex`, `.html`, `.json`) for every `@[blueprint]` declaration.
 
     @param stx The full declaration syntax
     @param declId The declaration identifier syntax
@@ -121,78 +92,69 @@ def elabDeclAndCaptureHighlighting (stx : Syntax) (declId : Syntax) (_mods : Opt
         let captureEnd ← IO.monoMsNow
         let captureTime := captureEnd - captureStart
 
-        -- Auto-export when dress mode is enabled (env var, option, or marker file)
-        -- Check BLUEPRINT_DRESS=1 environment variable OR blueprint.dress option
-        -- OR .lake/build/.dress marker file (created by `lake run dress`)
-        let dressEnv ← IO.getEnv "BLUEPRINT_DRESS"
-        let markerFile : System.FilePath := ".lake" / "build" / ".dress"
-        let markerExists ← markerFile.pathExists
-        let dressEnabled := dressEnv == some "1" || blueprint.dress.get (← getOptions) || markerExists
-
-        -- Write per-declaration artifacts immediately when dress mode is enabled
-        if dressEnabled then
-          -- Read from LeanArchitect's blueprintExt instead of re-parsing attribute syntax
-          let env ← getEnv
-          match Architect.blueprintExt.find? env resolvedName with
-          | some node =>
-            try
-              -- Enrich node with delimiter-extracted TeX if statement.text is empty
-              let enrichedNode ← do
-                if !node.statement.text.isEmpty then
+        -- Write per-declaration artifacts for every @[blueprint] declaration.
+        -- (The dress-mode gate was removed in #247 -- artifact writing is now unconditional.)
+        let env ← getEnv
+        match Architect.blueprintExt.find? env resolvedName with
+        | some node =>
+          try
+            -- Enrich node with delimiter-extracted TeX if statement.text is empty
+            let enrichedNode ← do
+              if !node.statement.text.isEmpty then
+                pure node
+              else
+                let file := (← read).fileName
+                let sourceContent ← IO.FS.readFile ⟨file⟩
+                let delimiterBlocks := Extract.extractDelimiters sourceContent
+                if delimiterBlocks.isEmpty then
                   pure node
                 else
-                  let file := (← read).fileName
-                  let sourceContent ← IO.FS.readFile ⟨file⟩
-                  let delimiterBlocks := Extract.extractDelimiters sourceContent
-                  if delimiterBlocks.isEmpty then
-                    pure node
-                  else
-                    -- Use syntax position for byte offset (DeclarationRange.pos only has line/col)
-                    match stx.getPos? with
-                    | some syntaxPos =>
-                      let declByteIdx := syntaxPos.byteIdx
-                      -- Find nearest preceding delimiter block
-                      let mut bestContent : Option String := none
-                      for block in delimiterBlocks do
-                        if block.pos < declByteIdx then
-                          bestContent := some block.content
-                      match bestContent with
-                      | some content =>
-                        trace[blueprint] "Enriched {resolvedName} with delimiter TeX ({content.length} chars)"
-                        pure (Extract.enrichNodeWithDelimiter node (some content) "both")
-                      | none => pure node
+                  -- Use syntax position for byte offset (DeclarationRange.pos only has line/col)
+                  match stx.getPos? with
+                  | some syntaxPos =>
+                    let declByteIdx := syntaxPos.byteIdx
+                    -- Find nearest preceding delimiter block
+                    let mut bestContent : Option String := none
+                    for block in delimiterBlocks do
+                      if block.pos < declByteIdx then
+                        bestContent := some block.content
+                    match bestContent with
+                    | some content =>
+                      trace[blueprint] "Enriched {resolvedName} with delimiter TeX ({content.length} chars)"
+                      pure (Extract.enrichNodeWithDelimiter node (some content) "both")
                     | none => pure node
+                  | none => pure node
 
-              trace[blueprint] "Node for {resolvedName}: label={enrichedNode.latexLabel}, statement.text={enrichedNode.statement.text.take 50}, proof={enrichedNode.proof.isSome}, latexEnv={enrichedNode.statement.latexEnv}"
+            trace[blueprint] "Node for {resolvedName}: label={enrichedNode.latexLabel}, statement.text={enrichedNode.statement.text.take 50}, proof={enrichedNode.proof.isSome}, latexEnv={enrichedNode.statement.latexEnv}"
 
-              -- Get highlighting from extension (just captured above)
-              let highlighting := dressedDeclExt.getState env |>.find? resolvedName
+            -- Get highlighting from extension (just captured above)
+            let highlighting := dressedDeclExt.getState env |>.find? resolvedName
 
-              -- Get source file path
-              let file := (← read).fileName
+            -- Get source file path
+            let file := (← read).fileName
 
-              -- Get declaration location
-              let location ← liftTermElabM do
-                Lean.findDeclarationRanges? resolvedName
+            -- Get declaration location
+            let location ← liftTermElabM do
+              Lean.findDeclarationRanges? resolvedName
 
-              -- Time the writeDeclarationArtifactsFromNode operation
-              let writeStart ← IO.monoMsNow
-              -- Write all artifacts (.tex, .html, .json) using the Node-based function
-              Generate.writeDeclarationArtifactsFromNode resolvedName enrichedNode highlighting (some file) (location.map (·.range))
-              let writeEnd ← IO.monoMsNow
-              let writeTime := writeEnd - writeStart
+            -- Time the writeDeclarationArtifactsFromNode operation
+            let writeStart ← IO.monoMsNow
+            -- Write all artifacts (.tex, .html, .json) using the Node-based function
+            Generate.writeDeclarationArtifactsFromNode resolvedName enrichedNode highlighting (some file) (location.map (·.range))
+            let writeEnd ← IO.monoMsNow
+            let writeTime := writeEnd - writeStart
 
-              -- Calculate and print total timing (only when trace option enabled)
-              let totalTime := captureTime + writeTime
-              trace[blueprint.timing] "captureHighlighting: {captureTime}ms for {resolvedName}"
-              trace[blueprint.timing] "writeArtifacts: {writeTime}ms for {resolvedName}"
-              trace[blueprint.timing] "TOTAL: {totalTime}ms for {resolvedName}"
+            -- Calculate and print total timing (only when trace option enabled)
+            let totalTime := captureTime + writeTime
+            trace[blueprint.timing] "captureHighlighting: {captureTime}ms for {resolvedName}"
+            trace[blueprint.timing] "writeArtifacts: {writeTime}ms for {resolvedName}"
+            trace[blueprint.timing] "TOTAL: {totalTime}ms for {resolvedName}"
 
-              trace[blueprint] "Wrote artifacts for {resolvedName} with label {enrichedNode.latexLabel}"
-            catch e =>
-              trace[blueprint.debug] "Failed to write declaration artifacts: {e.toMessageData}"
-          | none =>
-            trace[blueprint] "blueprintExt not populated for {resolvedName}"
+            trace[blueprint] "Wrote artifacts for {resolvedName} with label {enrichedNode.latexLabel}"
+          catch e =>
+            trace[blueprint.debug] "Failed to write declaration artifacts: {e.toMessageData}"
+        | none =>
+          trace[blueprint] "blueprintExt not populated for {resolvedName}"
 
 /-! ## Elaboration Rules
 
@@ -293,6 +255,5 @@ abbrev inCaptureHook := Capture.inCaptureHookM
 def withCaptureHookFlag (act : CommandElabM α) : CommandElabM α :=
   Capture.withCaptureHookFlag act
 abbrev elabDeclAndCaptureHighlighting := Capture.elabDeclAndCaptureHighlighting
-abbrev isDressEnabled := Capture.isDressEnabled
 
 end Dress
