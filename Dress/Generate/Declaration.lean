@@ -35,6 +35,22 @@ open SubVerso.Highlighting
 
 namespace Dress.Generate
 
+/-- Remove all `/-%%...%%-/` delimiter blocks from a string.
+    These blocks embed TeX statement text in Lean comments and should not
+    appear in the rendered HTML output. Handles multiple blocks per string.
+    If a `/-%%` has no matching `%%-/`, the text is preserved unchanged. -/
+def stripDelimiterBlocks (s : String) : String :=
+  let parts := s.splitOn "/-%%"
+  match parts with
+  | [] => ""
+  | first :: rest =>
+    let cleaned := rest.map fun part =>
+      match part.splitOn "%%-/" with
+      | []          => ""                          -- impossible per splitOn contract
+      | [_noClose]  => "/-%%"  ++ part             -- no closing tag: restore opener
+      | _ :: after  => "%%-/".intercalate after    -- drop content before first %%-/
+    first ++ String.join cleaned
+
 /-- Generate all artifacts (.tex, .html, .json) for a declaration (no caching).
     This is the core generation logic, called on cache miss. -/
 private def generateArtifacts (name : Name) (node : Architect.Node)
@@ -60,6 +76,9 @@ private def generateArtifacts (name : Name) (node : Architect.Node)
     -- Rainbow bracket highlighting is applied automatically by Verso's toHtmlRainbow
     let renderStart ← IO.monoMsNow
     let (htmlContent, hoverJson) := HtmlRender.renderHighlightedWithHovers hl
+    -- Strip /-%%...%%-/ delimiter blocks that leak through SubVerso highlighting
+    let htmlContent := stripDelimiterBlocks htmlContent
+    let hoverJson := stripDelimiterBlocks hoverJson
     let renderEnd ← IO.monoMsNow
 
     -- Time: Write HTML and hovers
