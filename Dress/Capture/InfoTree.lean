@@ -6,6 +6,7 @@ import Lean
 import Batteries.Lean.NameMapAttribute
 import SubVerso.Highlighting
 import Dress.Highlighting
+import Dress.Capture.State
 
 /-!
 # Info Tree Capture
@@ -38,13 +39,48 @@ def getModuleHighlighting (env : Environment) : NameMap Highlighted :=
 def addHighlighting (env : Environment) (declName : Name) (hl : Highlighted) : Environment :=
   dressedDeclExt.addEntry env (declName, hl)
 
+/-! ## Module-Level Caches for Cross-Declaration Amortization -/
+
+/-- Module-level suffix index. Built once per module on first `@[blueprint]` declaration,
+    then reused for all subsequent declarations. Avoids the O(E) `env.constants.fold`
+    per declaration where E can exceed 100K for mathlib-heavy projects. -/
+initialize moduleSuffixIndexRef :
+    IO.Ref (Option (SubVerso.Compat.HashMap String (Array Name))) ←
+  IO.mkRef none
+
+/-- Module-level expression/signature cache ref. Created on first use,
+    passed to SubVerso's `highlightIncludingUnparsed` for cross-declaration sharing. -/
+initialize moduleCacheRef : IO.Ref (Option (IO.Ref ModuleHighlightCache)) ←
+  IO.mkRef none
+
+/-- Get or build the module-level suffix index. Builds from `env.constants` on first call,
+    returns cached index on subsequent calls. Avoids the O(E) fold per declaration. -/
+def getOrBuildSuffixIndex (env : Environment) :
+    IO (SubVerso.Compat.HashMap String (Array Name)) := do
+  match ← moduleSuffixIndexRef.get with
+  | some idx => return idx
+  | none =>
+    let idx := buildStandaloneSuffixIndex env
+    moduleSuffixIndexRef.set (some idx)
+    return idx
+
+/-- Get or create the module-level highlight cache ref.
+    Creates a fresh `IO.Ref ModuleHighlightCache` on first call. -/
+def getOrCreateModuleCacheRef : IO (IO.Ref ModuleHighlightCache) := do
+  match ← moduleCacheRef.get with
+  | some ref => return ref
+  | none =>
+    let ref ← IO.mkRef (default : ModuleHighlightCache)
+    moduleCacheRef.set (some ref)
+    return ref
+
 /-! ## Core Capture Functions -/
 
 /-- Capture SubVerso highlighting from info trees for a given syntax.
 
     This function:
     1. Takes the syntax, messages, and info trees from the current command state
-    2. Calls SubVerso's `highlightIncludingUnparsed` function
+    2. Calls SubVerso's `highlightIncludingUnparsed` function with module-level caches
     3. Returns the highlighted result or `none` on failure
 
     Must be called DURING elaboration while info trees are still available.
@@ -62,7 +98,12 @@ def captureHighlightingFromInfoTrees
   if trees.isEmpty then
     return none
   try
+    -- Get module-level caches for cross-declaration amortization
+    let suffixIndex ← getOrBuildSuffixIndex (← getEnv)
+    let cacheRef ← getOrCreateModuleCacheRef
     let hl ← highlightIncludingUnparsed stx messages trees suppressedNamespaces
+      (prebuiltSuffixIndex? := some suffixIndex)
+      (moduleCacheRef? := some cacheRef)
     return some hl
   catch _ =>
     -- SubVerso throws "not original, can't highlight: Lean.SourceInfo.synthetic" for some
