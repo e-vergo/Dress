@@ -31,6 +31,22 @@ open SubVerso.Highlighting
 
 namespace Dress.Generate
 
+/-- Remove all `/-%%...%%-/` delimiter blocks from a string.
+    These blocks embed TeX statement text in Lean comments and should not
+    appear in the rendered HTML output. Handles multiple blocks per string.
+    If a `/-%%` has no matching `%%-/`, the text is preserved unchanged. -/
+def stripDelimiterBlocks (s : String) : String :=
+  let parts := s.splitOn "/-%%"
+  match parts with
+  | [] => ""
+  | first :: rest =>
+    let cleaned := rest.map fun part =>
+      match part.splitOn "%%-/" with
+      | []          => ""                          -- impossible per splitOn contract
+      | [_noClose]  => "/-%%"  ++ part             -- no closing tag: restore opener
+      | _ :: after  => "%%-/".intercalate after    -- drop content before first %%-/
+    first ++ String.join cleaned
+
 /-- Determine the appropriate LaTeX environment for a declaration.
     Returns "theorem" for theorem-like declarations, "definition" otherwise. -/
 def getDefaultLatexEnv (name : Name) : CommandElabM String := do
@@ -91,6 +107,8 @@ def generateDeclarationTexFromNode (name : Name) (node : Architect.Node)
     -- Use stateful renderer so proof body IDs continue from signature IDs
     -- Rainbow bracket highlighting is applied automatically by Verso's toHtmlRainbow
     let (sigHtml, sigHoverJson, sigState) := HtmlRender.renderHighlightedWithState sigHl
+    -- Strip /-%%...%%-/ delimiter blocks that leak through SubVerso highlighting
+    let sigHtml := stripDelimiterBlocks sigHtml
     let sigBase64 := Base64.encodeString sigHtml
     out := out ++ s!"\\leansignaturesourcehtml\{{sigBase64}}\n"
 
@@ -101,6 +119,8 @@ def generateDeclarationTexFromNode (name : Name) (node : Architect.Node)
     if let some proofHl := bodyHl then
       let (proofHtml, proofHovers, _) := HtmlRender.renderHighlightedWithState proofHl sigState
       proofHoverJson := proofHovers
+      -- Strip /-%%...%%-/ delimiter blocks from proof HTML
+      let proofHtml := stripDelimiterBlocks proofHtml
       let proofBase64 := Base64.encodeString proofHtml
       out := out ++ s!"\\leanproofsourcehtml\{{proofBase64}}\n"
 
@@ -109,6 +129,8 @@ def generateDeclarationTexFromNode (name : Name) (node : Architect.Node)
     let finalHoverJson := if proofHoverJson != "{}" && !proofHoverJson.isEmpty
                           then proofHoverJson
                           else sigHoverJson
+    -- Strip /-%%...%%-/ delimiter blocks from hover data
+    let finalHoverJson := stripDelimiterBlocks finalHoverJson
     let hoverBase64 := Base64.encodeString finalHoverJson
     out := out ++ s!"\\leanhoverdata\{{hoverBase64}}\n"
 
