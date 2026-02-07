@@ -94,6 +94,14 @@ def _root_.Dress.NodeWithPos.toLatex (node : Dress.NodeWithPos) : m Latex := do
     let base64Html := Dress.stringToBase64 htmlStr
     addLatex := addLatex ++ "\\leanproofsourcehtml{" ++ base64Html ++ "}\n"
 
+  -- Emit above/below narrative content as raw LaTeX (base64 encoded)
+  if let some aboveText := allNodes.findSome? (·.above) then
+    let base64Above := Dress.stringToBase64 aboveText
+    addLatex := addLatex ++ "\\leanabove{" ++ base64Above ++ "}\n"
+  if let some belowText := allNodes.findSome? (·.below) then
+    let base64Below := Dress.stringToBase64 belowText
+    addLatex := addLatex ++ "\\leanbelow{" ++ base64Below ++ "}\n"
+
   let inferredUsess ← allNodes.mapM (·.inferUses)
   let statementUses := InferredUses.merge (inferredUsess.map (·.1))
   let proofUses := InferredUses.merge (inferredUsess.map (·.2))
@@ -226,7 +234,9 @@ def nodeWithPosToJson (node : NodeWithPos) : Json :=
     "hasLean": $(node.hasLean),
     "file": $(node.file),
     "location": $(node.location.map locationToJson),
-    "highlightedCode": $(node.highlightedCode.map highlightedToJson)
+    "highlightedCode": $(node.highlightedCode.map highlightedToJson),
+    "above": $(node.above),
+    "below": $(node.below)
   }
 
 def BlueprintContent.toJson : BlueprintContent → Json
