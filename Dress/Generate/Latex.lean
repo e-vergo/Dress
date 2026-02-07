@@ -134,6 +134,14 @@ def generateDeclarationTexFromNode (name : Name) (node : Architect.Node)
     let hoverBase64 := Base64.encodeString finalHoverJson
     out := out ++ s!"\\leanhoverdata\{{hoverBase64}}\n"
 
+  -- Above/below narrative content (base64 encoded)
+  if let some aboveText := node.above then
+    let base64Above := Base64.encodeString aboveText
+    out := out ++ s!"\\leanabove\{{base64Above}}\n"
+  if let some belowText := node.below then
+    let base64Below := Base64.encodeString belowText
+    out := out ++ s!"\\leanbelow\{{base64Below}}\n"
+
   -- Uses (from inferred statement uses)
   unless statementUses.uses.isEmpty do
     out := out ++ s!"\\uses\{{",".intercalate statementUses.uses.toList}}\n"
