@@ -40,6 +40,10 @@ structure SbsData where
   hoverData : Option String := none
   /-- Fallback declaration names -/
   declNames : Array Lean.Name := #[]
+  /-- Content to display above the theorem block (decoded LaTeX) -/
+  above : Option String := none
+  /-- Content to display below the theorem block (decoded LaTeX) -/
+  below : Option String := none
   deriving Repr, Inhabited
 
 /-- Rendering variant for side-by-side displays -/
@@ -242,10 +246,20 @@ def renderSideBySide (data : SbsData) (variant : SbsVariant) : String :=
   -- Both blueprint and paper mode show Lean code column
   let leanCol := renderLeanColumn data
 
-  s!"<div id=\"{escapeHtml data.id}\" class=\"{containerClass}\">
+  -- Optional above content (raw LaTeX for MathJax processing)
+  let aboveHtml := match data.above with
+    | some content => s!"\n<div class=\"sbs-above-content\">{content}</div>"
+    | none => ""
+
+  -- Optional below content (raw LaTeX for MathJax processing)
+  let belowHtml := match data.below with
+    | some content => s!"\n<div class=\"sbs-below-content\">{content}</div>"
+    | none => ""
+
+  s!"{aboveHtml}<div id=\"{escapeHtml data.id}\" class=\"{containerClass}\">
 {latexCol}
 {leanCol}
-</div>"
+</div>{belowHtml}"
 
 /-! ## Convenience Constructors -/
 
