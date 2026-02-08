@@ -130,12 +130,13 @@ def renderProofToggle (proofHtml : Option String) : String :=
   match proofHtml with
   | none => ""
   | some proof =>
+    let contentDiv := if proof.trimAscii.toString.isEmpty then ""
+      else s!"\n  <div class=\"proof_content\"><p>{proof}</p></div>"
     s!"<div class=\"proof_wrapper proof_inline\">
   <div class=\"proof_heading\">
     <span class=\"proof_caption\">Proof</span>
     <span class=\"expand-proof\">\u25BC</span>
-  </div>
-  <div class=\"proof_content\"><p>{proof}</p></div>
+  </div>{contentDiv}
 </div>"
 
 /-- Build the hover data attribute string if present -/
