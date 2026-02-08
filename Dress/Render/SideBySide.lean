@@ -138,101 +138,87 @@ def renderProofToggle (proofHtml : Option String) : String :=
   <div class=\"proof_content\"><p>{proof}</p></div>
 </div>"
 
-/-- Render the Lean code column (right side) -/
-def renderLeanColumn (data : SbsData) : String :=
-  -- Handle all 4 cases for signature/proof combinations
-  let codeContent := match data.signatureHtml, data.proofBodyHtml with
-    | some sig, some proof =>
-      s!"<code class=\"hl lean lean-signature\">{sig}</code><code class=\"hl lean lean-proof-body\">{proof}</code>"
-    | some sig, none =>
-      s!"<code class=\"hl lean lean-signature\">{sig}</code>"
-    | none, some proof =>
-      s!"<code class=\"hl lean lean-proof-body\">{proof}</code>"
-    | none, none =>
+/-- Build the hover data attribute string if present -/
+def hoverDataAttr (data : SbsData) : String :=
+  match data.hoverData with
+  | some json => s!" data-lean-hovers=\"{escapeHtml json}\""
+  | none => ""
+
+/-- Render the Lean signature grid cell (row 2, col 2) -/
+def renderSignatureCell (data : SbsData) : String :=
+  let hoverAttr := hoverDataAttr data
+  let codeContent := match data.signatureHtml with
+    | some sig => s!"<code class=\"hl lean lean-signature\">{sig}</code>"
+    | none =>
       -- Fallback: show declaration names if no highlighted code
       let names := data.declNames.map (fun (n : Lean.Name) => n.toString) |>.toList |> String.intercalate ", "
       if names.isEmpty then
         "<code class=\"hl lean\">-- No Lean code available</code>"
       else
         s!"<code class=\"hl lean\">-- See: {escapeHtml names}</code>"
-
-  -- Build the hover data attribute if present
-  let hoverAttr := match data.hoverData with
-    | some json => s!" data-lean-hovers=\"{escapeHtml json}\""
-    | none => ""
-
-  s!"<div class=\"sbs-lean-column\">
-  <pre class=\"lean-code hl lean\"{hoverAttr}>
-{codeContent}
-  </pre>
+  s!"<div class=\"sbs-signature\">
+  <pre class=\"lean-code hl lean\"{hoverAttr}>{codeContent}</pre>
 </div>"
 
-/-- Render the LaTeX column (left side) for blueprint variant -/
-def renderLatexColumnBlueprint (data : SbsData) : String :=
-  -- Escape user-controlled values to prevent XSS
+/-- Render the Lean proof body grid cell (row 3, col 2) -/
+def renderProofLeanCell (data : SbsData) : String :=
+  match data.proofBodyHtml with
+  | some proof =>
+    let hoverAttr := hoverDataAttr data
+    s!"<div class=\"sbs-proof-lean\">
+  <pre class=\"lean-code hl lean\"{hoverAttr}><code class=\"hl lean lean-proof-body\">{proof}</code></pre>
+</div>"
+  | none => "<div class=\"sbs-proof-lean\"></div>"
+
+/-- Render the heading grid cell (row 1, col 1) for blueprint variant -/
+def renderHeadingCellBlueprint (data : SbsData) : String :=
   let envType := escapeHtml data.envType
   let displayLabel := escapeHtml (data.displayNumber.getD data.label)
   let statusColor := statusToColor data.status
   let statusTitle := statusToDisplayString data.status
-
-  -- Heading with status dot (color indicates status)
-  let heading := s!"<div class=\"{envType}_thmheading\">
+  s!"<div class=\"sbs-heading\"><div class=\"{envType}_thmheading\">
   <span class=\"{envType}_thmcaption\">{capitalize envType}</span>
   <span class=\"{envType}_thmlabel\">{displayLabel}</span>
   <div class=\"thm_header_extras {statusToCssClass data.status}\"><span class=\"status-dot header-status-dot\" style=\"background:{statusColor}\" title=\"Status: {statusTitle}\"></span></div>
-</div>"
+</div></div>"
 
-  -- Statement content (statementHtml is pre-rendered LaTeX HTML, trusted)
-  let statement := s!"<div class=\"{envType}_thmcontent\"><p>{data.statementHtml}</p></div>"
-
-  -- Optional proof toggle
-  let proofToggle := renderProofToggle data.proofHtml
-
-  s!"<div class=\"sbs-latex-column\">
-{heading}
-{statement}
-{proofToggle}
-</div>"
-
-/-- Render the LaTeX column (left side) for paper variant -/
-def renderLatexColumnPaper (data : SbsData) (blueprintUrl : Option String) : String :=
-  -- Escape user-controlled values to prevent XSS
+/-- Render the heading grid cell (row 1, col 1) for paper variant -/
+def renderHeadingCellPaper (data : SbsData) (blueprintUrl : Option String) : String :=
   let envType := escapeHtml data.envType
   let displayLabel := escapeHtml (data.displayNumber.getD data.label)
-
-  -- Blueprint link if URL provided
   let blueprintLink := match blueprintUrl with
     | some url => s!" <a class=\"blueprint-link\" href=\"{escapeHtml url}\">[blueprint]</a>"
     | none => ""
-
-  -- Verification badge (replaces status dot for paper mode)
   let badge := renderVerificationBadge data.status
-
-  -- Paper-style heading with verification badge + blueprint link
-  let heading := s!"<div class=\"paper-theorem-header\">
+  s!"<div class=\"sbs-heading\"><div class=\"paper-theorem-header\">
   <span class=\"paper-theorem-type\">{capitalize envType} {displayLabel}</span>
   {badge}{blueprintLink}
-</div>"
+</div></div>"
 
-  -- Statement content (statementHtml is pre-rendered LaTeX HTML, trusted)
-  let statement := s!"<div class=\"{envType}_thmcontent\"><p>{data.statementHtml}</p></div>"
-
-  -- Optional proof toggle
-  let proofToggle := renderProofToggle data.proofHtml
-
-  s!"<div class=\"sbs-latex-column\">
-{heading}
-{statement}
-{proofToggle}
-</div>"
-
-/-- Render the LaTeX column based on variant -/
-def renderLatexColumn (data : SbsData) (variant : SbsVariant) : String :=
+/-- Render the heading grid cell based on variant -/
+def renderHeadingCell (data : SbsData) (variant : SbsVariant) : String :=
   match variant with
-  | .blueprint => renderLatexColumnBlueprint data
-  | .paper blueprintUrl => renderLatexColumnPaper data blueprintUrl
+  | .blueprint => renderHeadingCellBlueprint data
+  | .paper blueprintUrl => renderHeadingCellPaper data blueprintUrl
 
-/-- Main entry point: render complete side-by-side display -/
+/-- Render the statement grid cell (row 2, col 1) -/
+def renderStatementCell (data : SbsData) : String :=
+  let envType := escapeHtml data.envType
+  s!"<div class=\"sbs-statement\"><div class=\"{envType}_thmcontent\"><p>{data.statementHtml}</p></div></div>"
+
+/-- Render the proof (LaTeX) grid cell (row 3, col 1) -/
+def renderProofLatexCell (data : SbsData) : String :=
+  let proofToggle := renderProofToggle data.proofHtml
+  if proofToggle.isEmpty then
+    "<div class=\"sbs-proof-latex\"></div>"
+  else
+    s!"<div class=\"sbs-proof-latex\">{proofToggle}</div>"
+
+/-- Main entry point: render complete side-by-side display.
+    Emits a 2-column x 3-row grid:
+    Row 1: heading | spacer
+    Row 2: statement | signature
+    Row 3: proof (LaTeX) | proof (Lean) -/
 def renderSideBySide (data : SbsData) (variant : SbsVariant) : String :=
   -- Escape user-controlled values to prevent XSS
   let envType := escapeHtml data.envType
@@ -242,9 +228,17 @@ def renderSideBySide (data : SbsData) (variant : SbsVariant) : String :=
     | .blueprint => s!"{envType}_thmwrapper sbs-container theorem-style-{envType}"
     | .paper _ => s!"paper-theorem paper-{envType} sbs-container"
 
-  let latexCol := renderLatexColumn data variant
-  -- Both blueprint and paper mode show Lean code column
-  let leanCol := renderLeanColumn data
+  -- Row 1: heading + spacer
+  let headingCell := renderHeadingCell data variant
+  let spacerCell := "<div class=\"sbs-heading-spacer\"></div>"
+
+  -- Row 2: statement + signature
+  let statementCell := renderStatementCell data
+  let signatureCell := renderSignatureCell data
+
+  -- Row 3: proof (LaTeX) + proof (Lean)
+  let proofLatexCell := renderProofLatexCell data
+  let proofLeanCell := renderProofLeanCell data
 
   -- Optional above content (raw LaTeX for MathJax processing)
   let aboveHtml := match data.above with
@@ -257,8 +251,12 @@ def renderSideBySide (data : SbsData) (variant : SbsVariant) : String :=
     | none => ""
 
   s!"{aboveHtml}<div id=\"{escapeHtml data.id}\" class=\"{containerClass}\">
-{latexCol}
-{leanCol}
+{headingCell}
+{spacerCell}
+{statementCell}
+{signatureCell}
+{proofLatexCell}
+{proofLeanCell}
 </div>{belowHtml}"
 
 /-! ## Convenience Constructors -/
