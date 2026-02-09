@@ -192,9 +192,12 @@ def renderHeadingCellPaper (data : SbsData) (blueprintUrl : Option String) : Str
     | some url => s!" <a class=\"blueprint-link\" href=\"{escapeHtml url}\">[blueprint]</a>"
     | none => ""
   let badge := renderVerificationBadge data.status
+  let statusColor := statusToColor data.status
+  let statusTitle := statusToDisplayString data.status
+  let statusDot := s!"<span class=\"status-dot paper-status-dot\" style=\"background:{statusColor}\" title=\"Status: {statusTitle}\"></span>"
   s!"<div class=\"sbs-heading\"><div class=\"paper-theorem-header\">
   <span class=\"paper-theorem-type\">{capitalize envType} {displayLabel}</span>
-  {badge}{blueprintLink}
+  {statusDot}{badge}{blueprintLink}
 </div></div>"
 
 /-- Render the heading grid cell based on variant -/
