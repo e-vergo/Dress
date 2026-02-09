@@ -217,10 +217,12 @@ def renderProofLatexCell (data : SbsData) : String :=
     s!"<div class=\"sbs-proof-latex\">{proofToggle}</div>"
 
 /-- Main entry point: render complete side-by-side display.
-    Emits a 2-column x 3-row grid:
-    Row 1: heading | spacer
-    Row 2: statement | signature
-    Row 3: proof (LaTeX) | proof (Lean) -/
+    Emits a 2-column x 5-row grid:
+    Row 1: above (LaTeX narrative) | spacer  (collapses if absent)
+    Row 2: heading | spacer
+    Row 3: statement | signature
+    Row 4: proof (LaTeX) | proof (Lean)
+    Row 5: below (LaTeX narrative) | spacer  (collapses if absent) -/
 def renderSideBySide (data : SbsData) (variant : SbsVariant) : String :=
   -- Escape user-controlled values to prevent XSS
   let envType := escapeHtml data.envType
@@ -230,36 +232,38 @@ def renderSideBySide (data : SbsData) (variant : SbsVariant) : String :=
     | .blueprint => s!"{envType}_thmwrapper sbs-container theorem-style-{envType}"
     | .paper _ => s!"paper-theorem paper-{envType} sbs-container"
 
-  -- Row 1: heading + spacer
+  -- Row 1 (optional): above content + spacer
+  let aboveHtml := match data.above with
+    | some content =>
+      s!"<div class=\"sbs-above-content\">{content}</div>\n<div class=\"sbs-above-spacer\"></div>\n"
+    | none => ""
+
+  -- Row 2: heading + spacer
   let headingCell := renderHeadingCell data variant
   let spacerCell := "<div class=\"sbs-heading-spacer\"></div>"
 
-  -- Row 2: statement + signature
+  -- Row 3: statement + signature
   let statementCell := renderStatementCell data
   let signatureCell := renderSignatureCell data
 
-  -- Row 3: proof (LaTeX) + proof (Lean)
+  -- Row 4: proof (LaTeX) + proof (Lean)
   let proofLatexCell := renderProofLatexCell data
   let proofLeanCell := renderProofLeanCell data
 
-  -- Optional above content (raw LaTeX for MathJax processing)
-  let aboveHtml := match data.above with
-    | some content => s!"\n<div class=\"sbs-above-content\">{content}</div>"
-    | none => ""
-
-  -- Optional below content (raw LaTeX for MathJax processing)
+  -- Row 5 (optional): below content + spacer
   let belowHtml := match data.below with
-    | some content => s!"\n<div class=\"sbs-below-content\">{content}</div>"
+    | some content =>
+      s!"<div class=\"sbs-below-content\">{content}</div>\n<div class=\"sbs-below-spacer\"></div>\n"
     | none => ""
 
-  s!"{aboveHtml}<div id=\"{escapeHtml data.id}\" class=\"{containerClass}\">
-{headingCell}
+  s!"<div id=\"{escapeHtml data.id}\" class=\"{containerClass}\">
+{aboveHtml}{headingCell}
 {spacerCell}
 {statementCell}
 {signatureCell}
 {proofLatexCell}
 {proofLeanCell}
-</div>{belowHtml}"
+{belowHtml}</div>"
 
 /-! ## Convenience Constructors -/
 
