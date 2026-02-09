@@ -49,5 +49,3 @@ import Dress.Graph.Json
 -- Render: Unified rendering for side-by-side displays
 import Dress.Render
 
--- Extract: TeX delimiter extraction from Lean sources
-import Dress.Extract

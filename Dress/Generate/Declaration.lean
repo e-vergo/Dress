@@ -60,9 +60,6 @@ private def generateArtifacts (name : Name) (node : Architect.Node)
     -- Rainbow bracket highlighting is applied automatically by Verso's toHtmlRainbow
     let renderStart ← IO.monoMsNow
     let (htmlContent, hoverJson) := HtmlRender.renderHighlightedWithHovers hl
-    -- Strip /-%%...%%-/ delimiter blocks that leak through SubVerso highlighting
-    let htmlContent := stripDelimiterBlocks htmlContent
-    let hoverJson := stripDelimiterBlocks hoverJson
     let renderEnd ← IO.monoMsNow
 
     -- Time: Write HTML and hovers
