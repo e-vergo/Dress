@@ -16,12 +16,14 @@ open Lean Cli Dress
 
 /-- Build enhanced manifest JSON with stats, key declarations, messages, project notes, and checks.
     This provides all the dashboard metadata in a single file. -/
-def buildEnhancedManifest (graph : Graph.Graph) : Json :=
+def buildEnhancedManifest (graph : Graph.Graph)
+    (soundnessResults : Array Graph.SoundnessResult := #[]) : Json :=
   -- Compute status counts
   let stats := graph.computeStatusCounts
 
-  -- Compute check results (connectivity, cycles)
+  -- Compute check results (connectivity, cycles, kernel verification)
   let checks := Graph.computeCheckResults graph
+  let checks := { checks with soundnessResults := soundnessResults }
 
   -- Extract key declarations
   let keyDeclarations := graph.nodes.filter (·.keyDeclaration) |>.map (·.id)
@@ -178,9 +180,23 @@ def runGraphCmd (p : Parsed) : IO UInt32 := do
     let jsonPath := dressedDir / "dep-graph.json"
     Graph.writeJsonFile layoutGraph jsonPath
 
+    -- Read soundness results if present
+    let soundnessResults : Array Graph.SoundnessResult ← do
+      let soundnessPath : System.FilePath := buildDir / "soundness.json"
+      if ← soundnessPath.pathExists then
+        let content ← IO.FS.readFile soundnessPath
+        match Json.parse content with
+        | .ok json =>
+          match json.getObjValAs? (Array Graph.SoundnessResult) "checks" with
+          | .ok results => pure results
+          | .error _ => pure #[]
+        | .error _ => pure #[]
+      else
+        pure #[]
+
     -- Write enhanced manifest with stats and dashboard metadata
     let manifestPath := dressedDir / "manifest.json"
-    let manifestJson := buildEnhancedManifest reducedGraph
+    let manifestJson := buildEnhancedManifest reducedGraph soundnessResults
     IO.FS.writeFile manifestPath manifestJson.pretty
 
     IO.println s!"Generated dependency graph:"

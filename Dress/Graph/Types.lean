@@ -128,6 +128,18 @@ def Graph.computeStatusCounts (g : Graph) : StatusCounts := Id.run do
     | .mathlibReady => counts := { counts with mathlibReady := counts.mathlibReady + 1 }
   return counts
 
+/-- Result of a single soundness check -/
+structure SoundnessResult where
+  /-- Name of the check -/
+  name : String
+  /-- Whether the check passed -/
+  passed : Bool
+  /-- Optional detail message -/
+  detail : String := ""
+  /-- Optional URL to link to from dashboard -/
+  url : String := ""
+  deriving Repr, Inhabited, ToJson, FromJson
+
 /-- Results of graph validation checks -/
 structure CheckResults where
   /-- Whether the graph is fully connected (single component) -/
@@ -138,7 +150,11 @@ structure CheckResults where
   componentSizes : Array Nat
   /-- Detected cycles in the graph (each cycle = array of node IDs) -/
   cycles : Array (Array String)
-  deriving Repr, Inhabited, ToJson, FromJson
+  /-- Whether all key declarations are fully proven (no sorry in dependency chain) -/
+  kernelVerified : Option Bool := none
+  /-- Results of project-specific soundness checks -/
+  soundnessResults : Array SoundnessResult := #[]
+  deriving Repr, Inhabited
 
 /-- Compute transitive reduction of the graph.
     Note: Uses Floyd-Warshall which is O(n³). Skip for large graphs (>100 nodes). -/

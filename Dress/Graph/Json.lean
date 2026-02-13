@@ -87,8 +87,31 @@ instance : ToJson CheckResults where
     ("isConnected", .bool c.isConnected),
     ("numComponents", .num c.numComponents),
     ("componentSizes", toJson c.componentSizes),
-    ("cycles", toJson c.cycles)
+    ("cycles", toJson c.cycles),
+    ("kernelVerified", toJson c.kernelVerified),
+    ("soundnessResults", toJson c.soundnessResults)
   ]
+
+/-- FromJson instance for CheckResults (backward compatible with legacy manifests) -/
+instance : FromJson CheckResults where
+  fromJson? j := do
+    let isConnected ← j.getObjValAs? Bool "isConnected"
+    let numComponents ← j.getObjValAs? Nat "numComponents"
+    let componentSizes ← j.getObjValAs? (Array Nat) "componentSizes"
+    let cycles ← j.getObjValAs? (Array (Array String)) "cycles"
+    -- Optional fields: absent or null → default
+    let kernelVerified : Option Bool :=
+      match j.getObjValAs? Bool "kernelVerified" with
+      | .ok v => some v
+      | .error _ => none
+    let soundnessResults : Array SoundnessResult :=
+      match j.getObjValAs? (Array SoundnessResult) "soundnessResults" with
+      | .ok v => v
+      | .error _ => #[]
+    return {
+      isConnected, numComponents, componentSizes, cycles,
+      kernelVerified, soundnessResults
+    }
 
 namespace Layout
 

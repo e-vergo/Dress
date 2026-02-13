@@ -49,3 +49,6 @@ import Dress.Graph.Json
 -- Render: Unified rendering for side-by-side displays
 import Dress.Render
 
+-- Svg: Composable SVG combinator library
+import Dress.Svg
+

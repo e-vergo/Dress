@@ -372,7 +372,14 @@ def computeCheckResults (g : Graph) : CheckResults :=
   let components := findComponents g
   let componentSizes := components.map (·.size)
   let cycles := detectCycles g
-  ⟨components.size <= 1, components.size, componentSizes, cycles⟩
+  let keyDecls := g.nodes.filter (·.keyDeclaration)
+  let kernelVerified := if keyDecls.isEmpty then none
+    else some (keyDecls.all (·.status == .fullyProven))
+  { isConnected := components.size <= 1
+    numComponents := components.size
+    componentSizes := componentSizes
+    cycles := cycles
+    kernelVerified := kernelVerified }
 
 /-- Build a dependency graph from Dress blueprint nodes (without inferred uses - uses explicit labels only) -/
 def fromNodes (nodes : Array Dress.NodeWithPos) : Graph :=
