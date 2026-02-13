@@ -16,7 +16,7 @@ require LeanArchitect from git
   "https://github.com/e-vergo/LeanArchitect.git" @ "main"
 
 require Cli from git
-  "https://github.com/mhuisi/lean4-cli" @ "v4.27.0"
+  "https://github.com/mhuisi/lean4-cli" @ "v4.28.0-rc1"
 
 require subverso from git
   "https://github.com/e-vergo/subverso.git" @ "main"
