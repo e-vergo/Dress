@@ -64,9 +64,10 @@ def registerLabel (label nodeId : String) : BuilderM Unit := do
     Priority order (highest to lowest):
     1. If manual `mathlibReady` flag → mathlibReady
     2. If manual `ready` flag → ready
-    3. If hasLean and no sorryAx → proven (fullyProven computed post-graph)
-    4. If hasLean but has sorryAx → sorry
-    5. Default: notReady (no Lean code)
+    3. If explicit `notReady` flag → notReady (overrides auto-derive)
+    4. If hasLean and no sorryAx → proven (fullyProven computed post-graph)
+    5. If hasLean but has sorryAx → sorry
+    6. Default: notReady (no Lean code)
 
     Note: fullyProven is computed by `computeFullyProven` after graph construction
     by checking that all dependencies are proven/fullyProven.
@@ -76,17 +77,21 @@ def getStatus (node : Architect.Node) (hasLean : Bool) (hasSorry : Bool := false
   | .mathlibReady => .mathlibReady  -- Highest priority manual flag
   | .ready => .ready                 -- Manual ready flag
   | _ =>
-    -- Auto-derive from Lean presence
-    if hasLean then
-      if hasSorry then .sorry else .proven
+    -- If the user explicitly set notReady := true, respect it even when Lean code exists
+    if node.statusExplicit && node.status == .notReady then .notReady
     else
-      .notReady  -- No Lean = notReady
+      -- Auto-derive from Lean presence
+      if hasLean then
+        if hasSorry then .sorry else .proven
+      else
+        .notReady  -- No Lean = notReady
 
 /-- Determine node shape from environment type -/
 def getShape (envType : String) : NodeShape :=
   match envType.toLower with
   | "def" | "definition" | "abbrev" | "structure" | "class" | "instance" => .box
   | "theorem" | "lemma" | "proposition" | "corollary" | "example" => .ellipse
+  | "axiom" => .diamond
   | _ => .ellipse  -- default to ellipse for unknown types
 
 /-- PASS 1: Register a node's label and create the graph node (no edges) -/
@@ -99,11 +104,9 @@ def registerNode (dressNode : Dress.NodeWithPos) (hasSorry : Bool) : BuilderM Un
   registerLabel label label
 
   -- Determine if this is a manually tagged status
-  -- Manual statuses are: ready, mathlibReady
+  -- Manual statuses are: ready, mathlibReady, explicit notReady
   -- Derived statuses are: notReady (default), sorry, proven, fullyProven
-  let isManual := match node.status with
-    | .ready | .mathlibReady => true
-    | _ => false
+  let isManual := node.statusExplicit
 
   -- Priority: title > full qualified Lean name
   let displayLabel := match node.title with
@@ -394,7 +397,14 @@ def fromNodes (nodes : Array Dress.NodeWithPos) : Graph :=
 def fromEnvironment (env : Lean.Environment) : Lean.CoreM Graph := do
   let entries := Architect.blueprintExt.getState env |>.toList
   let nodesData ← entries.toArray.mapM fun (_, node) => do
-    let dressNode ← Dress.toDressNodeWithPos node
+    let mut dressNode ← Dress.toDressNodeWithPos node
+    -- Check if the underlying Lean constant is an axiom and override envType
+    match env.find? node.name with
+    | some (.axiomInfo _) =>
+      let updatedStatement := { dressNode.toNode.statement with latexEnv := "axiom" }
+      let updatedNode := { dressNode.toNode with statement := updatedStatement }
+      dressNode := { dressNode with toNode := updatedNode }
+    | _ => pure ()
     -- Infer uses from actual Lean code dependencies
     let (statementUses, proofUses) ← node.inferUses
     return Builder.NodeBuildData.mk dressNode (!proofUses.leanOk) statementUses.uses proofUses.uses

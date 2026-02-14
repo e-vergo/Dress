@@ -398,26 +398,33 @@ def buildLibraryDepGraph (lib : LeanLib) : FetchM (Job FilePath) := do
     let moduleNames := mods.map fun mod => mod.name.toString (escape := false)
 
     -- Find the extract_blueprint executable
-    -- In the context of a downstream project using Dress, we need to find
-    -- the executable from the Dress package
+    -- Check multiple locations: Dress package itself, git dependency, path dependency
     let exePath := ws.root.buildDir / "bin" / "extract_blueprint"
-
-    -- Check if we're in the Dress package itself or a downstream project
     let exeExists ← exePath.pathExists
     let exeToUse ← if exeExists then
         pure exePath
       else
-        -- Try to find it in the packages
-        let dressExePath := ws.root.lakeDir / "packages" / "Dress" / ".lake" / "build" / "bin" / "extract_blueprint"
-        let dressExeExists ← dressExePath.pathExists
-        if !dressExeExists then
-          IO.eprintln s!"Warning: extract_blueprint executable not found. Skipping dep-graph generation."
-          IO.eprintln s!"  Tried: {exePath}"
-          IO.eprintln s!"  Tried: {dressExePath}"
-          -- Create empty files as placeholders
-          IO.FS.writeFile svgPath ""
-          return svgPath
-        pure dressExePath
+        -- Try git dependency location (.lake/packages/Dress/)
+        let gitDepPath := ws.root.lakeDir / "packages" / "Dress" / ".lake" / "build" / "bin" / "extract_blueprint"
+        let gitDepExists ← gitDepPath.pathExists
+        if gitDepExists then
+          pure gitDepPath
+        else
+          -- Try to find Dress package in workspace (handles path dependencies)
+          let mut found : Option System.FilePath := none
+          for pkg in ws.packages do
+            if pkg.keyName == `Dress then
+              let pkgExePath := pkg.buildDir / "bin" / "extract_blueprint"
+              if ← pkgExePath.pathExists then
+                found := some pkgExePath
+          match found with
+          | some p => pure p
+          | none =>
+            IO.eprintln s!"Warning: extract_blueprint executable not found. Skipping dep-graph generation."
+            IO.eprintln s!"  Tried: {exePath}"
+            IO.eprintln s!"  Tried: {gitDepPath}"
+            IO.FS.writeFile svgPath ""
+            return svgPath
 
     -- Run via `lake env` to ensure correct LEAN_PATH is set
     -- This allows the executable to import project modules

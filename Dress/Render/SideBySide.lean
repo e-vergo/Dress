@@ -66,12 +66,12 @@ def escapeHtml (s : String) : String :=
 
 /-- Convert NodeStatus to color hex code -/
 def statusToColor : NodeStatus → String
-  | .notReady => "#F4A460"       -- Sandy Brown
-  | .ready => "#20B2AA"          -- Light Sea Green
-  | .sorry => "#8B0000"          -- Dark Red
-  | .proven => "#90EE90"         -- Light Green
-  | .fullyProven => "#228B22"    -- Forest Green
-  | .mathlibReady => "#87CEEB"   -- Light Blue
+  | .notReady => "#E8820C"       -- Vivid Orange
+  | .ready => "#0097A7"          -- Deep Teal/Cyan
+  | .sorry => "#C62828"          -- Vivid Red
+  | .proven => "#66BB6A"         -- Medium Green
+  | .fullyProven => "#1B5E20"    -- Deep Forest Green
+  | .mathlibReady => "#42A5F5"   -- Vivid Blue
 
 /-- Convert NodeStatus to display string -/
 def statusToDisplayString : NodeStatus → String
@@ -178,10 +178,11 @@ def renderHeadingCellBlueprint (data : SbsData) : String :=
   let displayLabel := escapeHtml (data.displayNumber.getD data.label)
   let statusColor := statusToColor data.status
   let statusTitle := statusToDisplayString data.status
+  let statusCss := statusToCssClass data.status
   s!"<div class=\"sbs-heading\"><div class=\"{envType}_thmheading\">
   <span class=\"{envType}_thmcaption\">{capitalize envType}</span>
   <span class=\"{envType}_thmlabel\">{displayLabel}</span>
-  <div class=\"thm_header_extras {statusToCssClass data.status}\"><span class=\"status-dot header-status-dot\" style=\"background:{statusColor}\" title=\"Status: {statusTitle}\"></span></div>
+  <div class=\"thm_header_extras {statusCss}\"><button class=\"status-dot-btn header-status-dot\" data-node-id=\"{escapeHtml data.id}\" data-status=\"{statusCss}\" style=\"background:{statusColor}\" title=\"{statusTitle}\" aria-label=\"Show dependency graph for {escapeHtml (data.displayNumber.getD data.label)}\"></button></div>
 </div></div>"
 
 /-- Render the heading grid cell (row 1, col 1) for paper variant -/

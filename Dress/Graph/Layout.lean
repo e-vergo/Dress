@@ -143,7 +143,7 @@ def clipToNodeBoundary (node : LayoutNode) (targetX targetY : Float) : Float × 
   let cx := node.x + node.width / 2
   let cy := node.y + node.height / 2
   match node.node.shape with
-  | .ellipse =>
+  | .ellipse | .diamond =>
     let rx := node.width / 2
     let ry := node.height / 2
     intersectLineEllipse cx cy rx ry targetX targetY
@@ -286,7 +286,7 @@ def segmentIntersectsObstacles (p1 p2 : Point) (obstacles : Array Obstacle)
       let obs := obstacles[i]!
       let intersects := match obs.shape with
         | .box => segmentIntersectsRect p1 p2 obs
-        | .ellipse => segmentIntersectsEllipse p1 p2 obs
+        | .ellipse | .diamond => segmentIntersectsEllipse p1 p2 obs
       if intersects then
         return true
   return false
@@ -298,7 +298,7 @@ def collectVisibilityVertices (source target : Point) (obstacles : Array Obstacl
   for obs in obstacles do
     let obsVerts := match obs.shape with
       | .box => rectObstacleVertices obs margin
-      | .ellipse => ellipseObstacleVertices obs margin
+      | .ellipse | .diamond => ellipseObstacleVertices obs margin
     vertices := vertices ++ obsVerts
   vertices := vertices.push target
   return vertices
@@ -1312,7 +1312,7 @@ def createLayoutEdges (g : Graph) (config : LayoutConfig) : LayoutM (Array Layou
     for obs in obstacles do
       let obsVerts := match obs.shape with
         | .box => rectObstacleVertices obs margin
-        | .ellipse => ellipseObstacleVertices obs margin
+        | .ellipse | .diamond => ellipseObstacleVertices obs margin
       verts := verts ++ obsVerts
     return verts
 

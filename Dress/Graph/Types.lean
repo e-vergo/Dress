@@ -23,6 +23,7 @@ export Architect (NodeStatus)
 inductive NodeShape where
   | box      -- definitions, abbrevs, structures, classes
   | ellipse  -- theorems, lemmas, propositions
+  | diamond  -- axioms
   deriving Repr, Inhabited, BEq
 
 /-- Edge style for visualization -/
@@ -75,6 +76,7 @@ structure StatusCounts where
   proven : Nat := 0
   fullyProven : Nat := 0
   mathlibReady : Nat := 0
+  numAxioms : Nat := 0
   total : Nat := 0
   deriving Repr, Inhabited, ToJson, FromJson
 
@@ -119,6 +121,9 @@ def Graph.computeStatusCounts (g : Graph) : StatusCounts := Id.run do
   let mut counts : StatusCounts := {}
   for node in g.nodes do
     counts := { counts with total := counts.total + 1 }
+    -- Count axioms by envType
+    if node.envType.toLower == "axiom" then
+      counts := { counts with numAxioms := counts.numAxioms + 1 }
     match node.status with
     | .notReady => counts := { counts with notReady := counts.notReady + 1 }
     | .ready => counts := { counts with ready := counts.ready + 1 }

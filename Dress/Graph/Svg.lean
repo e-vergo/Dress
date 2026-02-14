@@ -17,12 +17,14 @@ structure SvgConfig where
   /-- Background color -/
   backgroundColor : String := "#ffffff"
   /-- Node fill colors by status (6 statuses) -/
-  notReadyColor : String := "#F4A460"     -- Orange - not ready to formalize
-  readyColor : String := "#20B2AA"        -- Teal - ready to formalize
-  sorryColor : String := "#8B0000"        -- Deep red - has sorryAx
-  provenColor : String := "#90EE90"       -- Light green - formalized without sorry
-  fullyProvenColor : String := "#228B22"  -- Dark green - this + all deps proven
-  mathlibReadyColor : String := "#87CEEB" -- Light blue - ready to upstream
+  notReadyColor : String := "#E8820C"     -- Vivid orange - not ready to formalize
+  readyColor : String := "#0097A7"        -- Deep teal/cyan - ready to formalize
+  sorryColor : String := "#C62828"        -- Vivid red - has sorryAx
+  provenColor : String := "#66BB6A"       -- Medium green - formalized without sorry
+  fullyProvenColor : String := "#1B5E20"  -- Deep forest green - this + all deps proven
+  mathlibReadyColor : String := "#42A5F5" -- Vivid blue - ready to upstream
+  /-- Axiom color (overrides status for axiom nodes) -/
+  axiomColor : String := "#7E57C2"       -- Vivid purple
   /-- Node stroke color -/
   strokeColor : String := "#000000"
   /-- Node stroke width -/
@@ -53,6 +55,7 @@ def getStatusColor (config : SvgConfig) : NodeStatus → String
 /-- Get text color based on node status - white for dark backgrounds -/
 def getTextColor (config : SvgConfig) : NodeStatus → String
   | .sorry | .fullyProven => "#ffffff"
+  | .ready => "#ffffff"
   | _ => config.textColor
 
 /-- Escape text for SVG -/
@@ -63,15 +66,31 @@ def escapeXml (s : String) : String :=
    |>.replace "\"" "&quot;"
    |>.replace "'" "&apos;"
 
+/-- Get CSS class name for a node status (for dark mode targeting) -/
+def statusCssClass : NodeStatus → String
+  | .notReady => "status-not-ready"
+  | .ready => "status-ready"
+  | .sorry => "status-sorry"
+  | .proven => "status-proven"
+  | .fullyProven => "status-fully-proven"
+  | .mathlibReady => "status-mathlib-ready"
+
 /-- Generate SVG for a single node -/
 def renderNode (config : SvgConfig) (node : Layout.LayoutNode) : String :=
-  let fillColor := getStatusColor config node.node.status
+  let fillColor := if node.node.envType.toLower == "axiom"
+    then config.axiomColor
+    else getStatusColor config node.node.status
   let href := node.node.url
   let label := escapeXml node.node.label
   let nodeId := escapeXml node.node.id
   let textY := node.y + node.height / 2 + config.fontSize / 3
   let cx := node.x + node.width / 2
   let cy := node.y + node.height / 2
+
+  -- CSS class for dark mode targeting
+  let statusClass := if node.node.envType.toLower == "axiom"
+    then "status-axiom"
+    else statusCssClass node.node.status
 
   -- Dotted border for manually-tagged nodes (notReady, ready, mathlibReady, inMathlib)
   let strokeDash := if node.node.isManuallyTagged then " stroke-dasharray=\"2,2\"" else ""
@@ -81,14 +100,19 @@ def renderNode (config : SvgConfig) (node : Layout.LayoutNode) : String :=
       -- Ellipse for theorems, lemmas, propositions
       let rx := node.width / 2
       let ry := node.height / 2
-      s!"  <ellipse cx=\"{cx}\" cy=\"{cy}\" rx=\"{rx}\" ry=\"{ry}\" " ++
+      s!"  <ellipse class=\"node-shape {statusClass}\" cx=\"{cx}\" cy=\"{cy}\" rx=\"{rx}\" ry=\"{ry}\" " ++
       s!"fill=\"{fillColor}\" stroke=\"{config.strokeColor}\" " ++
       s!"stroke-width=\"{config.strokeWidth}\"{strokeDash}/>\n"
     | .box =>
       -- Rectangle for definitions, structures, classes
-      s!"  <rect x=\"{node.x}\" y=\"{node.y}\" " ++
+      s!"  <rect class=\"node-shape {statusClass}\" x=\"{node.x}\" y=\"{node.y}\" " ++
       s!"width=\"{node.width}\" height=\"{node.height}\" " ++
       s!"rx=\"{config.borderRadius}\" ry=\"{config.borderRadius}\" " ++
+      s!"fill=\"{fillColor}\" stroke=\"{config.strokeColor}\" " ++
+      s!"stroke-width=\"{config.strokeWidth}\"{strokeDash}/>\n"
+    | .diamond =>
+      -- Diamond (rotated square) for axioms
+      s!"  <polygon class=\"node-shape {statusClass}\" points=\"{cx},{node.y} {node.x + node.width},{cy} {cx},{node.y + node.height} {node.x},{cy}\" " ++
       s!"fill=\"{fillColor}\" stroke=\"{config.strokeColor}\" " ++
       s!"stroke-width=\"{config.strokeWidth}\"{strokeDash}/>\n"
 
@@ -97,8 +121,10 @@ def renderNode (config : SvgConfig) (node : Layout.LayoutNode) : String :=
   s!"  <title>{nodeId}</title>\n" ++
   s!"  <a href=\"{href}\" target=\"_parent\">\n" ++
   shapeElement ++
-  let textColor := getTextColor config node.node.status
-  s!"    <text x=\"{cx}\" y=\"{textY}\" " ++
+  let textColor := if node.node.envType.toLower == "axiom"
+    then "#ffffff"  -- white on purple
+    else getTextColor config node.node.status
+  s!"    <text class=\"node-text\" x=\"{cx}\" y=\"{textY}\" " ++
   s!"text-anchor=\"middle\" font-family=\"{config.fontFamily}\" " ++
   s!"font-size=\"{config.fontSize}\" fill=\"{textColor}\">" ++
   s!"{label}</text>\n" ++
@@ -173,7 +199,7 @@ def renderEdge (config : SvgConfig) (edge : Layout.LayoutEdge) : String :=
       | .dashed => " stroke-dasharray=\"5,3\""
       | .solid => ""
 
-    return s!"<path d=\"{path}\" fill=\"none\" stroke=\"{config.edgeColor}\" " ++
+    return s!"<path class=\"graph-edge\" data-from=\"{escapeXml edge.from_}\" data-to=\"{escapeXml edge.to}\" d=\"{path}\" fill=\"none\" stroke=\"{config.edgeColor}\" " ++
       s!"stroke-width=\"{config.edgeWidth}\"{dashAttr} marker-end=\"url(#arrowhead)\"/>\n"
 
 /-- Generate SVG defs (arrowhead marker) -/
@@ -181,7 +207,7 @@ def renderDefs (config : SvgConfig) : String :=
   "<defs>\n" ++
   s!"  <marker id=\"arrowhead\" markerWidth=\"10\" markerHeight=\"7\" " ++
   s!"refX=\"9\" refY=\"3.5\" orient=\"auto\">\n" ++
-  s!"    <polygon points=\"0 0, 10 3.5, 0 7\" fill=\"{config.edgeColor}\"/>\n" ++
+  s!"    <polygon class=\"graph-arrowhead\" points=\"0 0, 10 3.5, 0 7\" fill=\"{config.edgeColor}\"/>\n" ++
   "  </marker>\n" ++
   "</defs>\n"
 
@@ -206,13 +232,15 @@ def renderLegend (config : SvgConfig) (_x _y : Float) : String := Id.run do
     ("Sorry", config.sorryColor),
     ("Proven", config.provenColor),
     ("Fully Proven", config.fullyProvenColor),
-    ("Mathlib Ready", config.mathlibReadyColor)
+    ("Mathlib Ready", config.mathlibReadyColor),
+    ("Axiom", config.axiomColor)
   ]
 
   -- Shape items (ellipse for theorems, box for definitions)
   let shapeItems := #[
     ("Theorems/Lemmas", "ellipse"),
-    ("Definitions", "box")
+    ("Definitions", "box"),
+    ("Axioms", "diamond")
   ]
 
   -- Calculate legend height
@@ -259,6 +287,10 @@ def renderLegend (config : SvgConfig) (_x _y : Float) : String := Id.run do
       let ry := boxSize / 2.5
       svg := svg ++ s!"  <ellipse cx=\"{cx}\" cy=\"{cy}\" rx=\"{rx}\" ry=\"{ry}\" " ++
         s!"fill=\"{config.provenColor}\" stroke=\"{config.strokeColor}\" stroke-width=\"1\"/>\n"
+    else if shape == "diamond" then
+      -- Mini diamond for axioms
+      svg := svg ++ s!"  <polygon points=\"{cx},{itemY} {padding + boxSize},{cy} {cx},{itemY + boxSize} {padding},{cy}\" " ++
+        s!"fill=\"{config.axiomColor}\" stroke=\"{config.strokeColor}\" stroke-width=\"1\"/>\n"
     else
       -- Mini rectangle for definitions
       svg := svg ++ s!"  <rect x=\"{padding}\" y=\"{itemY}\" width=\"{boxSize}\" height=\"{boxSize}\" " ++
@@ -285,7 +317,7 @@ def render (layout : Layout.LayoutGraph) (config : SvgConfig := {}) : String := 
     s!"viewBox=\"{viewBoxX} {viewBoxY} {totalWidth} {totalHeight}\">\n"
 
   -- Background
-  svg := svg ++ s!"<rect width=\"100%\" height=\"100%\" fill=\"{config.backgroundColor}\"/>\n"
+  svg := svg ++ s!"<rect class=\"graph-bg\" width=\"100%\" height=\"100%\" fill=\"{config.backgroundColor}\"/>\n"
 
   -- Defs
   svg := svg ++ renderDefs config

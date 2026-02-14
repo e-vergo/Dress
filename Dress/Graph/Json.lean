@@ -48,6 +48,17 @@ open Lean
 
 -- NodeStatus is re-exported from Architect.NodeStatus which already has ToJson instance
 
+instance : ToJson NodeShape where
+  toJson
+    | .box => "box"
+    | .ellipse => "ellipse"
+    | .diamond => "diamond"
+
+instance : ToJson EdgeStyle where
+  toJson
+    | .solid => "solid"
+    | .dashed => "dashed"
+
 /-- JSON instance for Node -/
 instance : ToJson Node where
   toJson n := Json.mkObj [
@@ -55,6 +66,7 @@ instance : ToJson Node where
     ("label", Json.str n.label),
     ("envType", Json.str n.envType),
     ("status", toJson n.status),
+    ("shape", toJson n.shape),
     ("url", Json.str n.url),
     ("leanDecls", Json.arr (n.leanDecls.map (Json.str ∘ toString))),
     ("moduleName", Json.str n.moduleName.toString),
@@ -71,7 +83,8 @@ instance : ToJson Node where
 instance : ToJson Edge where
   toJson e := Json.mkObj [
     ("from", Json.str e.from_),
-    ("to", Json.str e.to)
+    ("to", Json.str e.to),
+    ("style", toJson e.style)
   ]
 
 /-- JSON instance for Graph (without layout) -/
@@ -122,6 +135,7 @@ instance : ToJson LayoutNode where
     ("label", Json.str ln.node.label),
     ("envType", Json.str ln.node.envType),
     ("status", toJson ln.node.status),
+    ("shape", toJson ln.node.shape),
     ("url", Json.str ln.node.url),
     ("leanDecls", Json.arr (ln.node.leanDecls.map (Json.str ∘ toString))),
     ("moduleName", Json.str ln.node.moduleName.toString),
@@ -147,17 +161,42 @@ instance : ToJson LayoutEdge where
   toJson le := Json.mkObj [
     ("from", Json.str le.from_),
     ("to", Json.str le.to),
-    ("points", Json.arr (le.points.map pointToJson))
+    ("points", Json.arr (le.points.map pointToJson)),
+    ("style", toJson le.style)
   ]
 
 /-- JSON instance for LayoutGraph -/
 instance : ToJson LayoutGraph where
-  toJson lg := Json.mkObj [
-    ("nodes", Json.arr (lg.nodes.map toJson)),
-    ("edges", Json.arr (lg.edges.map toJson)),
-    ("width", toJson lg.width),
-    ("height", toJson lg.height)
-  ]
+  toJson lg := Id.run do
+    -- Build adjacency lists from edges
+    let mut predMap : Std.HashMap String (Array String) := {}
+    let mut succMap : Std.HashMap String (Array String) := {}
+    -- Initialize
+    for node in lg.nodes do
+      predMap := predMap.insert node.node.id #[]
+      succMap := succMap.insert node.node.id #[]
+    -- Populate: edge from_ -> to means "to depends on from_"
+    for edge in lg.edges do
+      match succMap.get? edge.from_ with
+      | some arr => succMap := succMap.insert edge.from_ (arr.push edge.to)
+      | none => pure ()
+      match predMap.get? edge.to with
+      | some arr => predMap := predMap.insert edge.to (arr.push edge.from_)
+      | none => pure ()
+    -- Build adjacency JSON
+    let adjEntries := lg.nodes.map fun node =>
+      (node.node.id, Json.mkObj [
+        ("predecessors", toJson (predMap.get? node.node.id |>.getD #[])),
+        ("successors", toJson (succMap.get? node.node.id |>.getD #[]))
+      ])
+    let adjacencyObj := Json.mkObj adjEntries.toList
+    return Json.mkObj [
+      ("nodes", Json.arr (lg.nodes.map toJson)),
+      ("edges", Json.arr (lg.edges.map toJson)),
+      ("adjacency", adjacencyObj),
+      ("width", toJson lg.width),
+      ("height", toJson lg.height)
+    ]
 
 end Layout
 

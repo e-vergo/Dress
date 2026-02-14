@@ -199,12 +199,65 @@ def runGraphCmd (p : Parsed) : IO UInt32 := do
     let manifestJson := buildEnhancedManifest reducedGraph soundnessResults
     IO.FS.writeFile manifestPath manifestJson.pretty
 
+    -- Compute per-node max depths for dynamic depth range
+    let allMaxDepths := Graph.computeAllMaxDepths reducedGraph Paths.sanitizeLabel
+
+    -- Clean and recreate subgraphs directory to remove stale files from prior runs
+    let subgraphsDir := dressedDir / "subgraphs"
+    if ← subgraphsDir.pathExists then do
+      -- Remove all node subdirectories and their contents
+      let entries ← subgraphsDir.readDir
+      for entry in entries do
+        let entryMeta ← entry.path.metadata
+        if entryMeta.type == .dir then do
+          -- Remove all files in the node directory
+          let subEntries ← entry.path.readDir
+          for subEntry in subEntries do
+            IO.FS.removeFile subEntry.path
+          IO.FS.removeDir entry.path
+        else
+          -- Remove top-level files (e.g. old metadata.json)
+          IO.FS.removeFile entry.path
+    IO.FS.createDirAll subgraphsDir
+    let metadataPath := subgraphsDir / "metadata.json"
+    IO.FS.writeFile metadataPath (Graph.depthMetadataToJson allMaxDepths)
+
+    -- Generate pre-rendered subgraphs for each node (capped at actual max depth)
+    let mut subgraphCount : Nat := 0
+    for node in reducedGraph.nodes do
+      let sanitizedId := Paths.sanitizeLabel node.id
+      let nodeDir := subgraphsDir / sanitizedId
+      IO.FS.createDirAll nodeDir
+      for direction in Graph.SubgraphDirection.all do
+        -- Get the max meaningful depth for this node+direction
+        let dirKey := direction.toString
+        let maxDepth := match allMaxDepths.get? sanitizedId with
+          | some info =>
+            match dirKey with
+            | "ancestors" => info.ancestors
+            | "descendants" => info.descendants
+            | _ => info.both
+          | none => Graph.maxSubgraphDepth
+        for depth in Graph.subgraphDepths do
+          -- Only generate up to the actual max depth for this node+direction
+          if depth ≤ maxDepth then
+            let subgraph := Graph.extractSubgraph reducedGraph node.id depth direction
+            -- Only render if the subgraph has nodes (it always should since center is included)
+            if !subgraph.nodes.isEmpty then
+              let subLayout := Graph.Layout.layout subgraph layoutConfig
+              let filename := s!"{direction.toString}-{depth}.svg"
+              let svgContent := Graph.Svg.render subLayout
+              IO.FS.writeFile (nodeDir / filename) svgContent
+              subgraphCount := subgraphCount + 1
+
     IO.println s!"Generated dependency graph:"
     IO.println s!"  SVG: {svgPath}"
     IO.println s!"  JSON: {jsonPath}"
     IO.println s!"  Manifest: {manifestPath}"
+    IO.println s!"  Metadata: {metadataPath}"
     IO.println s!"  Nodes: {layoutGraph.nodes.size}"
     IO.println s!"  Edges: {layoutGraph.edges.size}"
+    IO.println s!"  Subgraphs: {subgraphCount} files in {subgraphsDir}"
 
   return 0
 
