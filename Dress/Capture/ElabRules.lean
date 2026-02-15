@@ -100,7 +100,7 @@ def elabDeclAndCaptureHighlighting (stx : Syntax) (declId : Syntax) (_mods : Opt
             trace[blueprint] "Node for {node.latexLabel}: label={node.latexLabel}, statement.text={node.statement.text.take 50}, proof={node.proof.isSome}, latexEnv={node.statement.latexEnv}"
 
             -- Get highlighting from extension (just captured above)
-            let highlighting := dressedDeclExt.getState env |>.find? resolvedName
+            let highlighting := dressedDeclExt.find? env resolvedName
 
             -- Get source file path
             let file := (← read).fileName
@@ -236,11 +236,11 @@ annotations. -/
     code display. -/
 elab "#dressNodes" : command => do
   let env ← getEnv
-  let blueprintState := (Architect.blueprintExt : SimplePersistentEnvExtension (Name × Architect.Node) (NameMap Architect.Node)).getState env
+  let entries := Architect.blueprintExt.getEntries env
   let buildDir : System.FilePath := ".lake" / "build"
   let moduleName := env.header.mainModule
-  let mut count := 0
-  for (name, node) in blueprintState do
+  let mut count : Nat := 0
+  for (name, node) in entries do
     -- Skip imported declarations (only process nodes from the current module's env)
     let label := node.latexLabel
     let declDir := Dress.Paths.getDeclarationDir buildDir moduleName label
