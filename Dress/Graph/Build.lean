@@ -392,7 +392,7 @@ def fromNodes (nodes : Array Dress.NodeWithPos) : Graph :=
 
 /-- Build graph from the environment's blueprint extension -/
 def fromEnvironment (env : Lean.Environment) : Lean.CoreM Graph := do
-  let entries := Architect.blueprintExt.getState env |>.toList
+  let entries := Architect.blueprintExt.getEntries env
   let nodesData ← entries.toArray.mapM fun (_, node) => do
     let mut dressNode ← Dress.toDressNodeWithPos node
     -- Check if the underlying Lean constant is an axiom and override envType
@@ -452,7 +452,6 @@ private def isProjectModule (modName : Lean.Name) (projectModules : Array Lean.N
     have @[blueprint] annotations. -/
 def computeCoverage (env : Lean.Environment) (projectModules : Array Lean.Name)
     : CoverageResult := Id.run do
-  let blueprintNames := Architect.blueprintExt.getState env
   let mut totalDeclarations : Nat := 0
   let mut coveredDeclarations : Nat := 0
   let mut uncovered : Array UncoveredDecl := #[]
@@ -470,7 +469,7 @@ def computeCoverage (env : Lean.Environment) (projectModules : Array Lean.Name)
       if isProjection env name then continue
 
       totalDeclarations := totalDeclarations + 1
-      if (blueprintNames.find? name).isSome then
+      if (Architect.blueprintExt.find? env name).isSome then
         coveredDeclarations := coveredDeclarations + 1
       else
         uncovered := uncovered.push {

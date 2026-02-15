@@ -35,9 +35,11 @@ namespace Dress.Capture
 initialize dressedDeclExt : NameMapExtension Highlighted ←
   registerNameMapExtension Highlighted
 
-/-- Get all captured highlighting for the current environment. -/
+/-- Get all captured highlighting for the current environment.
+    Built from entries for compatibility with both old and new batteries
+    (which changed NameMapExtension state to Thunk). -/
 def getModuleHighlighting (env : Environment) : NameMap Highlighted :=
-  dressedDeclExt.getState env
+  dressedDeclExt.getEntries env |>.foldl (init := {}) fun m (k, v) => m.insert k v
 
 /-- Add captured highlighting for a declaration to the environment. -/
 def addHighlighting (env : Environment) (declName : Name) (hl : Highlighted) : Environment :=
