@@ -75,8 +75,12 @@ def statusCssClass : NodeStatus → String
   | .fullyProven => "status-fully-proven"
   | .mathlibReady => "status-mathlib-ready"
 
-/-- Generate SVG for a single node -/
-def renderNode (config : SvgConfig) (node : Layout.LayoutNode) : String :=
+/-- Generate SVG for a single node.
+    When `baseNodeId` matches this node's ID, applies accent styling
+    (thicker stroke, blue border, drop-shadow) to highlight it as the
+    focal node in a subgraph view. -/
+def renderNode (config : SvgConfig) (node : Layout.LayoutNode)
+    (baseNodeId : Option String := none) : String :=
   let fillColor := if node.node.envType.toLower == "axiom"
     then config.axiomColor
     else getStatusColor config node.node.status
@@ -95,26 +99,32 @@ def renderNode (config : SvgConfig) (node : Layout.LayoutNode) : String :=
   -- Dotted border for manually-tagged nodes (notReady, ready, mathlibReady, inMathlib)
   let strokeDash := if node.node.isManuallyTagged then " stroke-dasharray=\"2,2\"" else ""
 
+  -- Base node highlighting: accent border + glow filter for the focal node
+  let isBase := baseNodeId == some node.node.id
+  let strokeCol := if isBase then "#2563EB" else config.strokeColor
+  let strokeW := if isBase then 3.0 else config.strokeWidth
+  let filterAttr := if isBase then " filter=\"url(#base-node-glow)\"" else ""
+
   let shapeElement := match node.node.shape with
     | .ellipse =>
       -- Ellipse for theorems, lemmas, propositions
       let rx := node.width / 2
       let ry := node.height / 2
       s!"  <ellipse class=\"node-shape {statusClass}\" cx=\"{cx}\" cy=\"{cy}\" rx=\"{rx}\" ry=\"{ry}\" " ++
-      s!"fill=\"{fillColor}\" stroke=\"{config.strokeColor}\" " ++
-      s!"stroke-width=\"{config.strokeWidth}\"{strokeDash}/>\n"
+      s!"fill=\"{fillColor}\" stroke=\"{strokeCol}\" " ++
+      s!"stroke-width=\"{strokeW}\"{strokeDash}{filterAttr}/>\n"
     | .box =>
       -- Rectangle for definitions, structures, classes
       s!"  <rect class=\"node-shape {statusClass}\" x=\"{node.x}\" y=\"{node.y}\" " ++
       s!"width=\"{node.width}\" height=\"{node.height}\" " ++
       s!"rx=\"{config.borderRadius}\" ry=\"{config.borderRadius}\" " ++
-      s!"fill=\"{fillColor}\" stroke=\"{config.strokeColor}\" " ++
-      s!"stroke-width=\"{config.strokeWidth}\"{strokeDash}/>\n"
+      s!"fill=\"{fillColor}\" stroke=\"{strokeCol}\" " ++
+      s!"stroke-width=\"{strokeW}\"{strokeDash}{filterAttr}/>\n"
     | .diamond =>
       -- Diamond (rotated square) for axioms
       s!"  <polygon class=\"node-shape {statusClass}\" points=\"{cx},{node.y} {node.x + node.width},{cy} {cx},{node.y + node.height} {node.x},{cy}\" " ++
-      s!"fill=\"{fillColor}\" stroke=\"{config.strokeColor}\" " ++
-      s!"stroke-width=\"{config.strokeWidth}\"{strokeDash}/>\n"
+      s!"fill=\"{fillColor}\" stroke=\"{strokeCol}\" " ++
+      s!"stroke-width=\"{strokeW}\"{strokeDash}{filterAttr}/>\n"
 
   -- Wrap in <g class="node"> with <title> for click handler compatibility
   s!"<g class=\"node\">\n" ++
@@ -202,13 +212,20 @@ def renderEdge (config : SvgConfig) (edge : Layout.LayoutEdge) : String :=
     return s!"<path class=\"graph-edge\" data-from=\"{escapeXml edge.from_}\" data-to=\"{escapeXml edge.to}\" d=\"{path}\" fill=\"none\" stroke=\"{config.edgeColor}\" " ++
       s!"stroke-width=\"{config.edgeWidth}\"{dashAttr} marker-end=\"url(#arrowhead)\"/>\n"
 
-/-- Generate SVG defs (arrowhead marker) -/
-def renderDefs (config : SvgConfig) : String :=
+/-- Generate SVG defs (arrowhead marker, and optional base-node glow filter).
+    The glow filter is only included when `includeBaseNodeFilter` is true
+    (i.e., for subgraph SVGs where a focal node is highlighted). -/
+def renderDefs (config : SvgConfig) (includeBaseNodeFilter : Bool := false) : String :=
   "<defs>\n" ++
   s!"  <marker id=\"arrowhead\" markerWidth=\"10\" markerHeight=\"7\" " ++
   s!"refX=\"9\" refY=\"3.5\" orient=\"auto\">\n" ++
   s!"    <polygon class=\"graph-arrowhead\" points=\"0 0, 10 3.5, 0 7\" fill=\"{config.edgeColor}\"/>\n" ++
   "  </marker>\n" ++
+  (if includeBaseNodeFilter then
+    "  <filter id=\"base-node-glow\" x=\"-20%\" y=\"-20%\" width=\"140%\" height=\"140%\">\n" ++
+    "    <feDropShadow dx=\"0\" dy=\"0\" stdDeviation=\"3\" flood-color=\"#2563EB\" flood-opacity=\"0.4\"/>\n" ++
+    "  </filter>\n"
+   else "") ++
   "</defs>\n"
 
 /-- Generate enhanced legend with border and shape examples -/
@@ -303,8 +320,12 @@ def renderLegend (config : SvgConfig) (_x _y : Float) : String := Id.run do
   svg := svg ++ "</g>\n"
   return svg
 
-/-- Generate complete SVG from a layout graph -/
-def render (layout : Layout.LayoutGraph) (config : SvgConfig := {}) : String := Id.run do
+/-- Generate complete SVG from a layout graph.
+    When `baseNodeId` is provided, the matching node receives accent styling
+    (thick blue border + drop-shadow glow) to identify it as the focal node
+    in a subgraph view. The full graph should pass `none`. -/
+def render (layout : Layout.LayoutGraph) (config : SvgConfig := {})
+    (baseNodeId : Option String := none) : String := Id.run do
   -- Use the content bounding box for proper centering
   -- viewBox uses (minX, minY) as origin so content is properly positioned
   let totalWidth := layout.width
@@ -319,8 +340,8 @@ def render (layout : Layout.LayoutGraph) (config : SvgConfig := {}) : String := 
   -- Background
   svg := svg ++ s!"<rect class=\"graph-bg\" width=\"100%\" height=\"100%\" fill=\"{config.backgroundColor}\"/>\n"
 
-  -- Defs
-  svg := svg ++ renderDefs config
+  -- Defs (include base-node glow filter for subgraph SVGs)
+  svg := svg ++ renderDefs config (includeBaseNodeFilter := baseNodeId.isSome)
 
   -- Edges (render first so nodes appear on top)
   svg := svg ++ "<g class=\"edges\">\n"
@@ -331,7 +352,7 @@ def render (layout : Layout.LayoutGraph) (config : SvgConfig := {}) : String := 
   -- Nodes
   svg := svg ++ "<g class=\"nodes\">\n"
   for node in layout.nodes do
-    svg := svg ++ renderNode config node
+    svg := svg ++ renderNode config node baseNodeId
   svg := svg ++ "</g>\n"
 
   -- Legend is now rendered as static HTML outside the SVG viewport
@@ -342,8 +363,8 @@ def render (layout : Layout.LayoutGraph) (config : SvgConfig := {}) : String := 
 
 /-- Generate SVG and write to file -/
 def renderToFile (layout : Layout.LayoutGraph) (path : System.FilePath)
-    (config : SvgConfig := {}) : IO Unit := do
-  let content := render layout config
+    (config : SvgConfig := {}) (baseNodeId : Option String := none) : IO Unit := do
+  let content := render layout config baseNodeId
   IO.FS.writeFile path content
 
 end Dress.Graph.Svg

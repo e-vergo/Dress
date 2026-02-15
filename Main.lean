@@ -249,9 +249,13 @@ def runGraphCmd (p : Parsed) : IO UInt32 := do
     IO.FS.writeFile metadataPath (Graph.depthMetadataToJson allMaxDepths)
 
     -- Phase 1: Collect all work items via BFS + hashing (fast, single-threaded)
+    -- Each work item is (nodeDir, filename, layoutHash, contentHash, centerId):
+    --   layoutHash: hash of sorted node IDs (keys the layout cache in Phase 2)
+    --   contentHash: hash of (centerId, sorted node IDs) (keys SVG file caching in Phase 3,
+    --                since the base node highlight makes SVGs differ even for identical node sets)
     let p1Start ← IO.monoNanosNow
     IO.eprintln s!"  Phase 1: Collecting subgraph work items..."
-    let mut workItems : Array (System.FilePath × String × UInt64) := #[]  -- (nodeDir, filename, hash)
+    let mut workItems : Array (System.FilePath × String × UInt64 × UInt64 × String) := #[]
     let mut uniqueNodeSets : Std.HashMap UInt64 (Std.HashSet String) := {}
     for node in reducedGraph.nodes do
       let sanitizedId := Paths.sanitizeLabel node.id
@@ -269,12 +273,13 @@ def runGraphCmd (p : Parsed) : IO UInt32 := do
         for (depth, subgraph) in subgraphs do
           if !subgraph.nodes.isEmpty then
             let sortedIds := subgraph.nodes.map (·.id) |>.qsort (· < ·)
-            let nodeHash := hash sortedIds
+            let layoutHash := hash sortedIds
+            let contentHash := hash (node.id, sortedIds)
             let filename := s!"{dirKey}-{depth}.svg"
-            workItems := workItems.push (nodeDir, filename, nodeHash)
-            if !uniqueNodeSets.contains nodeHash then
+            workItems := workItems.push (nodeDir, filename, layoutHash, contentHash, node.id)
+            if !uniqueNodeSets.contains layoutHash then
               let idSet := subgraph.nodes.foldl (init := ({} : Std.HashSet String)) fun acc n => acc.insert n.id
-              uniqueNodeSets := uniqueNodeSets.insert nodeHash idSet
+              uniqueNodeSets := uniqueNodeSets.insert layoutHash idSet
     let p1End ← IO.monoNanosNow
     IO.eprintln s!"  Phase 1: {workItems.size} SVGs needed, {uniqueNodeSets.size} unique layouts ({(p1End - p1Start) / 1000000}ms)"
 
@@ -293,7 +298,7 @@ def runGraphCmd (p : Parsed) : IO UInt32 := do
     IO.eprintln s!"  Phase 3: Writing SVG files..."
     -- Pre-create all directories (must be sequential to avoid races)
     let mut dirsCreated : Std.HashSet String := {}
-    for (nodeDir, _, _) in workItems do
+    for (nodeDir, _, _, _, _) in workItems do
       let dirStr := nodeDir.toString
       if !dirsCreated.contains dirStr then
         IO.FS.createDirAll nodeDir
@@ -303,20 +308,21 @@ def runGraphCmd (p : Parsed) : IO UInt32 := do
     let mut subgraphCount : Nat := 0
     let mut skippedCount : Nat := 0
     let mut newHashes : Std.HashMap String UInt64 := {}
-    for (nodeDir, filename, nodeHash) in workItems do
+    for (nodeDir, filename, layoutHash, contentHash, centerId) in workItems do
       let path := nodeDir / filename
       let pathStr := path.toString
-      newHashes := newHashes.insert pathStr nodeHash
-      -- Check cache: skip if hash matches and file exists on disk
-      if previousHashes.get? pathStr == some nodeHash then
+      newHashes := newHashes.insert pathStr contentHash
+      -- Check cache: skip if content hash matches and file exists on disk
+      if previousHashes.get? pathStr == some contentHash then
         if (← path.pathExists) then
           skippedCount := skippedCount + 1
           subgraphCount := subgraphCount + 1
           continue
-      if let some layout := layoutCache.get? nodeHash then
+      if let some layout := layoutCache.get? layoutHash then
         let ly := layout  -- capture for closure
+        let cid := centerId  -- capture for closure
         let task ← IO.asTask do
-          let svgContent := Graph.Svg.render ly
+          let svgContent := Graph.Svg.render ly (baseNodeId := some cid)
           IO.FS.writeFile path svgContent
         writeTasks := writeTasks.push task
         subgraphCount := subgraphCount + 1
