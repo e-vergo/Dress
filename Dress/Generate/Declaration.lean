@@ -74,7 +74,44 @@ private def generateArtifacts (name : Name) (node : Architect.Node)
     trace[blueprint.debug] "Wrote {hoversPath}"
     pure (renderEnd - renderStart, writeEnd - writeStart)
   else
-    pure (0, 0)
+    -- No highlighting (retroactive annotation): generate plain-text signature from environment
+    let writeStart ← IO.monoMsNow
+    let sig ← liftTermElabM do
+      let env ← getEnv
+      match env.find? name with
+      | some ci => do
+        -- Check if this is a structure and show fields
+        match Lean.getStructureInfo? env name with
+        | some sinfo =>
+          let fields ← sinfo.fieldInfo.mapM fun fi => do
+            match env.find? fi.projFn with
+            | some fci =>
+              Lean.Meta.forallTelescopeReducing fci.type fun _ body => do
+                let fmtF ← Lean.Meta.ppExpr body
+                pure s!"  {fi.fieldName} : {fmtF}"
+            | none => pure s!"  {fi.fieldName}"
+          let fieldStr := "\n".intercalate fields.toList
+          pure s!"structure {name} where\n{fieldStr}"
+        | none =>
+          let fmt ← Lean.Meta.ppExpr ci.type
+          match ci with
+          | .defnInfo _ => pure s!"def {name} : {fmt} := ..."
+          | .thmInfo _ => pure s!"theorem {name} : {fmt}"
+          | .axiomInfo _ => pure s!"axiom {name} : {fmt}"
+          | .inductInfo _ => pure s!"inductive {name} : {fmt}"
+          | _ => pure s!"{name} : {fmt}"
+      | none => pure s!"-- {name} (declaration not found)"
+    -- Escape HTML entities
+    let htmlSig := sig.replace "&" "&amp;" |>.replace "<" "&lt;" |>.replace ">" "&gt;"
+    let htmlContent := s!"<pre class=\"lean-code hl lean\"><code class=\"hl lean\">{htmlSig}</code></pre>"
+    let htmlPath := Paths.getDeclarationHtmlPath buildDir moduleName label
+    IO.FS.writeFile htmlPath htmlContent
+    let hoversPath := Paths.getDeclarationHoversPath buildDir moduleName label
+    IO.FS.writeFile hoversPath "{}"
+    let writeEnd ← IO.monoMsNow
+    trace[blueprint.debug] "Wrote {htmlPath} (plain-text signature)"
+    trace[blueprint.debug] "Wrote {hoversPath} (empty hovers)"
+    pure (0, writeEnd - writeStart)
 
   -- Time: Write .json file with metadata
   let jsonWriteStart ← IO.monoMsNow
@@ -84,7 +121,7 @@ private def generateArtifacts (name : Name) (node : Architect.Node)
       let hlJson := (Lean.toJson hl).compress
       s!"\{\"name\": \"{name}\", \"label\": \"{label}\", \"highlighting\": {hlJson}}"
     | none =>
-      s!"\{\"name\": \"{name}\", \"label\": \"{label}\"}"
+      s!"\{\"name\": \"{name}\", \"label\": \"{label}\", \"plainText\": true}"
   IO.FS.writeFile jsonPath jsonContent
   let jsonWriteEnd ← IO.monoMsNow
   trace[blueprint.debug] "Wrote {jsonPath}"
