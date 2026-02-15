@@ -111,6 +111,38 @@ def generateDeclarationTexFromNode (name : Name) (node : Architect.Node)
                           else sigHoverJson
     let hoverBase64 := Base64.encodeString finalHoverJson
     out := out ++ s!"\\leanhoverdata\{{hoverBase64}}\n"
+  else
+    -- No highlighting (retroactive annotation): generate plain-text signature from environment
+    let sig ← liftTermElabM do
+      let env ← getEnv
+      match env.find? name with
+      | some ci =>
+        match Lean.getStructureInfo? env name with
+        | some sinfo =>
+          let fields ← sinfo.fieldInfo.mapM fun fi => do
+            match env.find? fi.projFn with
+            | some fci =>
+              Lean.Meta.forallTelescopeReducing fci.type fun _ body => do
+                let fmtF ← Lean.Meta.ppExpr body
+                pure s!"  {fi.fieldName} : {fmtF}"
+            | none => pure s!"  {fi.fieldName}"
+          let fieldStr := "\n".intercalate fields.toList
+          pure s!"structure {name} where\n{fieldStr}"
+        | none =>
+          let fmt ← Lean.Meta.ppExpr ci.type
+          match ci with
+          | .defnInfo _ => pure s!"def {name} : {fmt} := ..."
+          | .thmInfo _ => pure s!"theorem {name} : {fmt}"
+          | .axiomInfo _ => pure s!"axiom {name} : {fmt}"
+          | .inductInfo _ => pure s!"inductive {name} : {fmt}"
+          | _ => pure s!"{name} : {fmt}"
+      | none => pure s!"-- {name} (declaration not found)"
+    let htmlSig := sig.replace "&" "&amp;" |>.replace "<" "&lt;" |>.replace ">" "&gt;"
+    let sigHtml := s!"<pre class=\"lean-code hl lean\"><code class=\"hl lean\">{htmlSig}</code></pre>"
+    let sigBase64 := Base64.encodeString sigHtml
+    out := out ++ s!"\\leansignaturesourcehtml\{{sigBase64}}\n"
+    let hoverBase64 := Base64.encodeString "{}"
+    out := out ++ s!"\\leanhoverdata\{{hoverBase64}}\n"
 
   -- Above/below narrative content (base64 encoded)
   if let some aboveText := node.above then
