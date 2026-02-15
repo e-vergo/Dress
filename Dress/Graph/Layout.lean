@@ -99,41 +99,23 @@ structure LayoutConfig where
 
 /-- Extract a subgraph from a laid-out graph by filtering to the given node IDs.
     Re-centers coordinates so the subgraph content starts at (padding, padding).
-    This avoids re-running Sugiyama layout — positions are inherited from the
-    main graph. -/
+    Computes viewBox from nodes only — same approach as the full graph's `layout`. -/
 def LayoutGraph.extractSubgraph (lg : LayoutGraph) (nodeIds : Std.HashSet String)
     (config : LayoutConfig := {}) : LayoutGraph := Id.run do
   let subNodes := lg.nodes.filter (fun ln => nodeIds.contains ln.node.id)
   let subEdges := lg.edges.filter (fun le => nodeIds.contains le.from_ && nodeIds.contains le.to)
   if subNodes.isEmpty then
     return { nodes := #[], edges := #[], width := 0, height := 0 }
-  -- Compute bounding box of filtered nodes, edge control points, and text labels.
-  -- Text labels rendered with text-anchor="middle" can extend beyond the node rect,
-  -- and arrowhead markers extend ~10px beyond edge endpoints.
+  -- Bounding box from nodes only (mirrors full graph layout)
   let mut minX := subNodes[0]!.x
   let mut minY := subNodes[0]!.y
   let mut maxX := subNodes[0]!.x + subNodes[0]!.width
   let mut maxY := subNodes[0]!.y + subNodes[0]!.height
   for n in subNodes do
-    -- Node text is centered at (x + width/2) with width ≈ charWidth * label.length.
-    -- The node rect is sized to fit, but account for any label overflow.
-    let labelWidth := n.node.label.length.toFloat * config.charWidth
-    let cx := n.x + n.width / 2
-    let textLeft := cx - labelWidth / 2
-    let textRight := cx + labelWidth / 2
-    if textLeft < minX then minX := textLeft
+    if n.x < minX then minX := n.x
     if n.y < minY then minY := n.y
-    if textRight > maxX then maxX := textRight
     if n.x + n.width > maxX then maxX := n.x + n.width
     if n.y + n.height > maxY then maxY := n.y + n.height
-  -- Include edge bezier control points and arrowhead extent in bounding box
-  let arrowBuffer : Float := 12.0  -- SVG marker is 10px wide + margin
-  for e in subEdges do
-    for (px, py) in e.points do
-      if px - arrowBuffer < minX then minX := px - arrowBuffer
-      if py - arrowBuffer < minY then minY := py - arrowBuffer
-      if px + arrowBuffer > maxX then maxX := px + arrowBuffer
-      if py + arrowBuffer > maxY then maxY := py + arrowBuffer
   -- Re-center: shift so content starts at (padding, padding)
   let offsetX := minX - config.padding
   let offsetY := minY - config.padding
@@ -141,9 +123,9 @@ def LayoutGraph.extractSubgraph (lg : LayoutGraph) (nodeIds : Std.HashSet String
     { n with x := n.x - offsetX, y := n.y - offsetY }
   let shiftedEdges := subEdges.map fun e =>
     { e with points := e.points.map fun (px, py) => (px - offsetX, py - offsetY) }
-  let width := maxX - minX + 2 * config.padding
-  let height := maxY - minY + 2 * config.padding
-  { nodes := shiftedNodes, edges := shiftedEdges, width, height, minX := 0, minY := 0 }
+  let viewBoxWidth := maxX - minX + 2 * config.padding
+  let viewBoxHeight := maxY - minY + 2 * config.padding
+  { nodes := shiftedNodes, edges := shiftedEdges, width := viewBoxWidth, height := viewBoxHeight, minX := 0, minY := 0 }
 
 /-- Compute node width based on label length -/
 def computeNodeWidth (config : LayoutConfig) (label : String) : Float :=
