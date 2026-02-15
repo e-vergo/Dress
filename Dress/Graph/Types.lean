@@ -100,6 +100,35 @@ structure Graph where
   edges : Array Edge
   deriving Repr, Inhabited
 
+/-- Precomputed adjacency index for O(1) edge lookups -/
+structure AdjIndex where
+  /-- Outgoing edges indexed by source node ID -/
+  outgoing : Std.HashMap String (Array Edge)
+  /-- Incoming edges indexed by target node ID -/
+  incoming : Std.HashMap String (Array Edge)
+
+/-- Build an adjacency index from a graph for fast edge lookups -/
+def Graph.buildAdjIndex (g : Graph) : AdjIndex := Id.run do
+  let mut outgoing : Std.HashMap String (Array Edge) := {}
+  let mut incoming : Std.HashMap String (Array Edge) := {}
+  for node in g.nodes do
+    outgoing := outgoing.insert node.id #[]
+    incoming := incoming.insert node.id #[]
+  for edge in g.edges do
+    let outArr := outgoing.get? edge.from_ |>.getD #[]
+    outgoing := outgoing.insert edge.from_ (outArr.push edge)
+    let inArr := incoming.get? edge.to |>.getD #[]
+    incoming := incoming.insert edge.to (inArr.push edge)
+  return { outgoing, incoming }
+
+/-- O(1) outgoing edge lookup from adjacency index -/
+def AdjIndex.outEdges (idx : AdjIndex) (id : String) : Array Edge :=
+  idx.outgoing.get? id |>.getD #[]
+
+/-- O(1) incoming edge lookup from adjacency index -/
+def AdjIndex.inEdges (idx : AdjIndex) (id : String) : Array Edge :=
+  idx.incoming.get? id |>.getD #[]
+
 /-- Get all node IDs -/
 def Graph.nodeIds (g : Graph) : Array String :=
   g.nodes.map (·.id)
@@ -145,6 +174,28 @@ structure SoundnessResult where
   url : String := ""
   deriving Repr, Inhabited, ToJson, FromJson
 
+/-- A declaration that lacks a @[blueprint] annotation -/
+structure UncoveredDecl where
+  /-- Fully qualified Lean name -/
+  name : String
+  /-- Module the declaration belongs to -/
+  moduleName : String
+  /-- Kind of declaration (theorem, def, etc.) -/
+  kind : String
+  deriving Repr, Inhabited, ToJson, FromJson
+
+/-- Blueprint coverage results for a project -/
+structure CoverageResult where
+  /-- Total number of eligible project-local declarations -/
+  totalDeclarations : Nat
+  /-- Number of declarations with @[blueprint] annotations -/
+  coveredDeclarations : Nat
+  /-- Coverage percentage (0.0 to 100.0) -/
+  coveragePercent : Float
+  /-- List of declarations missing @[blueprint] annotation -/
+  uncovered : Array UncoveredDecl
+  deriving Repr, Inhabited
+
 /-- Results of graph validation checks -/
 structure CheckResults where
   /-- Whether the graph is fully connected (single component) -/
@@ -159,53 +210,44 @@ structure CheckResults where
   kernelVerified : Option Bool := none
   /-- Results of project-specific soundness checks -/
   soundnessResults : Array SoundnessResult := #[]
+  /-- Blueprint coverage results (what percentage of declarations have @[blueprint]) -/
+  coverage : Option CoverageResult := none
   deriving Repr, Inhabited
 
 /-- Compute transitive reduction of the graph.
-    Note: Uses Floyd-Warshall which is O(n³). Skip for large graphs (>100 nodes). -/
+    Uses DFS-based approach: for each edge (u,v), checks if v is reachable
+    from u via an alternative path of length >= 2.
+    O(E * (V + E)) worst case, but much faster in practice on sparse DAGs. -/
 def Graph.transitiveReduction (g : Graph) : Graph := Id.run do
-  -- Skip for large graphs - Floyd-Warshall is O(n³), too slow for 500+ nodes
-  if g.nodes.size > 100 then
-    return g
+  -- Skip for very large graphs
+  if g.nodes.size > 500 then return g
 
-  -- Build adjacency sets for reachability
-  let mut reachable : Std.HashMap String (Std.HashSet String) := {}
-  for node in g.nodes do
-    reachable := reachable.insert node.id {}
-
-  -- Initialize direct edges
-  for edge in g.edges do
-    match reachable.get? edge.from_ with
-    | some set => reachable := reachable.insert edge.from_ (set.insert edge.to)
-    | none => pure ()
-
-  -- Compute transitive closure (Floyd-Warshall style)
-  for k in g.nodeIds do
-    for i in g.nodeIds do
-      for j in g.nodeIds do
-        let iReachK := reachable.get? i |>.map (·.contains k) |>.getD false
-        let kReachJ := reachable.get? k |>.map (·.contains j) |>.getD false
-        if iReachK && kReachJ then
-          match reachable.get? i with
-          | some set => reachable := reachable.insert i (set.insert j)
-          | none => pure ()
-
-  -- Keep only edges that are not implied by transitivity
+  let adj := g.buildAdjIndex
   let mut reducedEdges : Array Edge := #[]
+
   for edge in g.edges do
-    let mut isTransitive := false
-    -- Check if there's an intermediate node
-    for mid in g.nodeIds do
-      if mid != edge.from_ && mid != edge.to then
-        let fromReachMid := reachable.get? edge.from_ |>.map (·.contains mid) |>.getD false
-        let midReachTo := reachable.get? mid |>.map (·.contains edge.to) |>.getD false
-        if fromReachMid && midReachTo then
-          -- Check if the edge from_ -> mid is direct
-          let directToMid := g.edges.any fun e => e.from_ == edge.from_ && e.to == mid
-          if directToMid then
-            isTransitive := true
-            break
-    if !isTransitive then
+    -- DFS from edge.from_, following outgoing edges but skipping
+    -- the direct edge to edge.to. If we reach edge.to, it's transitive.
+    let mut reachable := false
+    let mut stack : Array String := #[]
+    let mut visited : Std.HashSet String := {}
+    visited := visited.insert edge.from_
+    for e in adj.outEdges edge.from_ do
+      if e.to != edge.to then
+        if !visited.contains e.to then
+          stack := stack.push e.to
+          visited := visited.insert e.to
+    while !stack.isEmpty && !reachable do
+      let node := stack.back!
+      stack := stack.pop
+      if node == edge.to then
+        reachable := true
+      else
+        for e in adj.outEdges node do
+          if !visited.contains e.to then
+            visited := visited.insert e.to
+            stack := stack.push e.to
+    if !reachable then
       reducedEdges := reducedEdges.push edge
 
   return { g with edges := reducedEdges }

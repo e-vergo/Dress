@@ -94,6 +94,22 @@ instance : ToJson Graph where
     ("edges", Json.arr (g.edges.map toJson))
   ]
 
+instance : ToJson CoverageResult where
+  toJson c := Json.mkObj [
+    ("totalDeclarations", toJson c.totalDeclarations),
+    ("coveredDeclarations", toJson c.coveredDeclarations),
+    ("coveragePercent", toJson c.coveragePercent),
+    ("uncovered", toJson c.uncovered)
+  ]
+
+instance : FromJson CoverageResult where
+  fromJson? j := do
+    let totalDeclarations ← j.getObjValAs? Nat "totalDeclarations"
+    let coveredDeclarations ← j.getObjValAs? Nat "coveredDeclarations"
+    let coveragePercent ← j.getObjValAs? Float "coveragePercent"
+    let uncovered ← j.getObjValAs? (Array UncoveredDecl) "uncovered"
+    return { totalDeclarations, coveredDeclarations, coveragePercent, uncovered }
+
 /-- JSON instance for CheckResults -/
 instance : ToJson CheckResults where
   toJson c := Json.mkObj [
@@ -102,7 +118,8 @@ instance : ToJson CheckResults where
     ("componentSizes", toJson c.componentSizes),
     ("cycles", toJson c.cycles),
     ("kernelVerified", toJson c.kernelVerified),
-    ("soundnessResults", toJson c.soundnessResults)
+    ("soundnessResults", toJson c.soundnessResults),
+    ("coverage", toJson c.coverage)
   ]
 
 /-- FromJson instance for CheckResults (backward compatible with legacy manifests) -/
@@ -121,9 +138,13 @@ instance : FromJson CheckResults where
       match j.getObjValAs? (Array SoundnessResult) "soundnessResults" with
       | .ok v => v
       | .error _ => #[]
+    let coverage : Option CoverageResult :=
+      match j.getObjValAs? CoverageResult "coverage" with
+      | .ok v => some v
+      | .error _ => none
     return {
       isConnected, numComponents, componentSizes, cycles,
-      kernelVerified, soundnessResults
+      kernelVerified, soundnessResults, coverage
     }
 
 namespace Layout

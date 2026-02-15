@@ -173,24 +173,35 @@ def renderProofLeanCell (data : SbsData) : String :=
   | none => "<div class=\"sbs-proof-lean\"></div>"
 
 /-- Render the heading grid cell (row 1, col 1) for blueprint variant -/
-def renderHeadingCellBlueprint (data : SbsData) : String :=
+def renderHeadingCellBlueprint (data : SbsData) (blueprintUrl : Option String := none)
+    (paperUrl : Option String := none) : String :=
   let envType := escapeHtml data.envType
   let displayLabel := escapeHtml (data.displayNumber.getD data.label)
   let statusColor := statusToColor data.status
   let statusTitle := statusToDisplayString data.status
   let statusCss := statusToCssClass data.status
+  let blueprintLink := match blueprintUrl with
+    | some url => s!" <a class=\"blueprint-link\" href=\"{escapeHtml url}\">[blueprint]</a>"
+    | none => ""
+  let paperLink := match paperUrl with
+    | some url => s!" <a class=\"paper-link\" href=\"{escapeHtml url}\">[paper]</a>"
+    | none => ""
   s!"<div class=\"sbs-heading\"><div class=\"{envType}_thmheading\">
   <span class=\"{envType}_thmcaption\">{capitalize envType}</span>
   <span class=\"{envType}_thmlabel\">{displayLabel}</span>
-  <div class=\"thm_header_extras {statusCss}\"><button class=\"status-dot-btn header-status-dot\" data-node-id=\"{escapeHtml data.id}\" data-status=\"{statusCss}\" style=\"background:{statusColor}\" title=\"{statusTitle}\" aria-label=\"Show dependency graph for {escapeHtml (data.displayNumber.getD data.label)}\"></button></div>
+  <div class=\"thm_header_extras {statusCss}\"><button class=\"status-dot-btn header-status-dot\" data-node-id=\"{escapeHtml data.id}\" data-status=\"{statusCss}\" style=\"background:{statusColor}\" title=\"{statusTitle}\" aria-label=\"Show dependency graph for {escapeHtml (data.displayNumber.getD data.label)}\"></button>{blueprintLink}{paperLink}</div>
 </div></div>"
 
 /-- Render the heading grid cell (row 1, col 1) for paper variant -/
-def renderHeadingCellPaper (data : SbsData) (blueprintUrl : Option String) : String :=
+def renderHeadingCellPaper (data : SbsData) (blueprintUrl : Option String)
+    (paperUrl : Option String := none) : String :=
   let envType := escapeHtml data.envType
   let displayLabel := escapeHtml (data.displayNumber.getD data.label)
   let blueprintLink := match blueprintUrl with
     | some url => s!" <a class=\"blueprint-link\" href=\"{escapeHtml url}\">[blueprint]</a>"
+    | none => ""
+  let paperLink := match paperUrl with
+    | some url => s!" <a class=\"paper-link\" href=\"{escapeHtml url}\">[paper]</a>"
     | none => ""
   let badge := renderVerificationBadge data.status
   let statusColor := statusToColor data.status
@@ -198,14 +209,15 @@ def renderHeadingCellPaper (data : SbsData) (blueprintUrl : Option String) : Str
   let statusDot := s!"<span class=\"status-dot paper-status-dot\" style=\"background:{statusColor}\" title=\"Status: {statusTitle}\"></span>"
   s!"<div class=\"sbs-heading\"><div class=\"paper-theorem-header\">
   <span class=\"paper-theorem-type\">{capitalize envType} {displayLabel}</span>
-  {statusDot}{badge}{blueprintLink}
+  {statusDot}{badge}{blueprintLink}{paperLink}
 </div></div>"
 
 /-- Render the heading grid cell based on variant -/
-def renderHeadingCell (data : SbsData) (variant : SbsVariant) : String :=
+def renderHeadingCell (data : SbsData) (variant : SbsVariant)
+    (blueprintUrl : Option String := none) (paperUrl : Option String := none) : String :=
   match variant with
-  | .blueprint => renderHeadingCellBlueprint data
-  | .paper blueprintUrl => renderHeadingCellPaper data blueprintUrl
+  | .blueprint => renderHeadingCellBlueprint data blueprintUrl paperUrl
+  | .paper bpUrl => renderHeadingCellPaper data bpUrl paperUrl
 
 /-- Render the statement grid cell (row 2, col 1) -/
 def renderStatementCell (data : SbsData) : String :=
@@ -227,7 +239,8 @@ def renderProofLatexCell (data : SbsData) : String :=
     Row 3: statement | signature
     Row 4: proof (LaTeX) | proof (Lean)
     Row 5: below (LaTeX narrative) | spacer  (collapses if absent) -/
-def renderSideBySide (data : SbsData) (variant : SbsVariant) : String :=
+def renderSideBySide (data : SbsData) (variant : SbsVariant)
+    (blueprintUrl : Option String := none) (paperUrl : Option String := none) : String :=
   -- Escape user-controlled values to prevent XSS
   let envType := escapeHtml data.envType
 
@@ -243,7 +256,7 @@ def renderSideBySide (data : SbsData) (variant : SbsVariant) : String :=
     | none => ""
 
   -- Row 2: heading + spacer
-  let headingCell := renderHeadingCell data variant
+  let headingCell := renderHeadingCell data variant blueprintUrl paperUrl
   let spacerCell := "<div class=\"sbs-heading-spacer\"></div>"
 
   -- Row 3: statement + signature

@@ -17,13 +17,14 @@ open Lean Cli Dress
 /-- Build enhanced manifest JSON with stats, key declarations, messages, project notes, and checks.
     This provides all the dashboard metadata in a single file. -/
 def buildEnhancedManifest (graph : Graph.Graph)
-    (soundnessResults : Array Graph.SoundnessResult := #[]) : Json :=
+    (soundnessResults : Array Graph.SoundnessResult := #[])
+    (coverage : Option Graph.CoverageResult := none) : Json :=
   -- Compute status counts
   let stats := graph.computeStatusCounts
 
   -- Compute check results (connectivity, cycles, kernel verification)
   let checks := Graph.computeCheckResults graph
-  let checks := { checks with soundnessResults := soundnessResults }
+  let checks := { checks with soundnessResults := soundnessResults, coverage := coverage }
 
   -- Extract key declarations
   let keyDeclarations := graph.nodes.filter (·.keyDeclaration) |>.map (·.id)
@@ -143,6 +144,29 @@ def runIndexCmd (p : Parsed) : IO UInt32 := do
     outputLibraryLatex baseDir library modules
   return 0
 
+/-- Load a cache manifest from a JSON file. Returns empty map if file doesn't exist or is invalid. -/
+private def loadCacheManifest (path : System.FilePath) : IO (Std.HashMap String UInt64) := do
+  if !(← path.pathExists) then return {}
+  let content ← IO.FS.readFile path
+  match Json.parse content with
+  | .error _ => return {}
+  | .ok json =>
+    let mut result : Std.HashMap String UInt64 := {}
+    match json with
+    | .obj kvs =>
+      for (k, v) in kvs.toArray do
+        match v.getNat? with
+        | .ok n => result := result.insert k n.toUInt64
+        | .error _ => pure ()
+    | _ => pure ()
+    return result
+
+/-- Write a cache manifest to a JSON file. -/
+private def writeCacheManifest (path : System.FilePath) (hashes : Std.HashMap String UInt64) : IO Unit := do
+  let entries : Array (String × Json) := hashes.toArray.map fun (k, v) =>
+    (k, .num (JsonNumber.fromNat v.toNat))
+  IO.FS.writeFile path (Json.mkObj entries.toList).pretty
+
 /-- Generate dependency graph SVG and JSON from a list of modules.
     Loads all modules, extracts blueprint nodes, builds graph, runs layout,
     and writes output files to the dressed directory. -/
@@ -162,15 +186,26 @@ def runGraphCmd (p : Parsed) : IO UInt32 := do
 
   -- Load environment with all modules
   runEnvOfImports modules {} do
+    let t0 ← IO.monoNanosNow
+
     -- Build graph from environment
     let graph ← Graph.fromEnvironment (← getEnv)
+    let t1 ← IO.monoNanosNow
+    IO.eprintln s!"  [timing] fromEnvironment: {(t1 - t0) / 1000000}ms ({graph.nodes.size} nodes)"
 
     -- Apply transitive reduction to simplify the graph
     let reducedGraph := graph.transitiveReduction
+    let t2 ← IO.monoNanosNow
+    IO.eprintln s!"  [timing] transitiveReduction: {(t2 - t1) / 1000000}ms"
 
-    -- Run Sugiyama layout
+    -- Build adjacency index once for all subgraph operations
+    let adj := reducedGraph.buildAdjIndex
+
+    -- Run Sugiyama layout for the main graph
     let layoutConfig : Graph.Layout.LayoutConfig := {}
     let layoutGraph := Graph.Layout.layout reducedGraph layoutConfig
+    let t3 ← IO.monoNanosNow
+    IO.eprintln s!"  [timing] main layout: {(t3 - t2) / 1000000}ms"
 
     -- Write SVG
     let svgPath := dressedDir / "dep-graph.svg"
@@ -194,42 +229,34 @@ def runGraphCmd (p : Parsed) : IO UInt32 := do
       else
         pure #[]
 
+    -- Compute blueprint coverage for project-local declarations
+    let coverage := Graph.computeCoverage (← getEnv) modules
+
     -- Write enhanced manifest with stats and dashboard metadata
     let manifestPath := dressedDir / "manifest.json"
-    let manifestJson := buildEnhancedManifest reducedGraph soundnessResults
+    let manifestJson := buildEnhancedManifest reducedGraph soundnessResults (some coverage)
     IO.FS.writeFile manifestPath manifestJson.pretty
 
     -- Compute per-node max depths for dynamic depth range
-    let allMaxDepths := Graph.computeAllMaxDepths reducedGraph Paths.sanitizeLabel
+    let allMaxDepths := Graph.computeAllMaxDepths reducedGraph adj Paths.sanitizeLabel
 
-    -- Clean and recreate subgraphs directory to remove stale files from prior runs
+    -- Subgraph caching: load previous manifest, keep existing files
     let subgraphsDir := dressedDir / "subgraphs"
-    if ← subgraphsDir.pathExists then do
-      -- Remove all node subdirectories and their contents
-      let entries ← subgraphsDir.readDir
-      for entry in entries do
-        let entryMeta ← entry.path.metadata
-        if entryMeta.type == .dir then do
-          -- Remove all files in the node directory
-          let subEntries ← entry.path.readDir
-          for subEntry in subEntries do
-            IO.FS.removeFile subEntry.path
-          IO.FS.removeDir entry.path
-        else
-          -- Remove top-level files (e.g. old metadata.json)
-          IO.FS.removeFile entry.path
     IO.FS.createDirAll subgraphsDir
+    let cacheManifestPath := subgraphsDir / "cache-manifest.json"
+    let previousHashes ← loadCacheManifest cacheManifestPath
     let metadataPath := subgraphsDir / "metadata.json"
     IO.FS.writeFile metadataPath (Graph.depthMetadataToJson allMaxDepths)
 
-    -- Generate pre-rendered subgraphs for each node (capped at actual max depth)
-    let mut subgraphCount : Nat := 0
+    -- Phase 1: Collect all work items via BFS + hashing (fast, single-threaded)
+    let p1Start ← IO.monoNanosNow
+    IO.eprintln s!"  Phase 1: Collecting subgraph work items..."
+    let mut workItems : Array (System.FilePath × String × UInt64) := #[]  -- (nodeDir, filename, hash)
+    let mut uniqueNodeSets : Std.HashMap UInt64 (Std.HashSet String) := {}
     for node in reducedGraph.nodes do
       let sanitizedId := Paths.sanitizeLabel node.id
       let nodeDir := subgraphsDir / sanitizedId
-      IO.FS.createDirAll nodeDir
       for direction in Graph.SubgraphDirection.all do
-        -- Get the max meaningful depth for this node+direction
         let dirKey := direction.toString
         let maxDepth := match allMaxDepths.get? sanitizedId with
           | some info =>
@@ -238,17 +265,86 @@ def runGraphCmd (p : Parsed) : IO UInt32 := do
             | "descendants" => info.descendants
             | _ => info.both
           | none => Graph.maxSubgraphDepth
-        for depth in Graph.subgraphDepths do
-          -- Only generate up to the actual max depth for this node+direction
-          if depth ≤ maxDepth then
-            let subgraph := Graph.extractSubgraph reducedGraph node.id depth direction
-            -- Only render if the subgraph has nodes (it always should since center is included)
-            if !subgraph.nodes.isEmpty then
-              let subLayout := Graph.Layout.layout subgraph layoutConfig
-              let filename := s!"{direction.toString}-{depth}.svg"
-              let svgContent := Graph.Svg.render subLayout
-              IO.FS.writeFile (nodeDir / filename) svgContent
-              subgraphCount := subgraphCount + 1
+        let subgraphs := Graph.extractSubgraphsIncremental reducedGraph adj node.id maxDepth direction
+        for (depth, subgraph) in subgraphs do
+          if !subgraph.nodes.isEmpty then
+            let sortedIds := subgraph.nodes.map (·.id) |>.qsort (· < ·)
+            let nodeHash := hash sortedIds
+            let filename := s!"{dirKey}-{depth}.svg"
+            workItems := workItems.push (nodeDir, filename, nodeHash)
+            if !uniqueNodeSets.contains nodeHash then
+              let idSet := subgraph.nodes.foldl (init := ({} : Std.HashSet String)) fun acc n => acc.insert n.id
+              uniqueNodeSets := uniqueNodeSets.insert nodeHash idSet
+    let p1End ← IO.monoNanosNow
+    IO.eprintln s!"  Phase 1: {workItems.size} SVGs needed, {uniqueNodeSets.size} unique layouts ({(p1End - p1Start) / 1000000}ms)"
+
+    -- Phase 2: Extract subgraph layouts from main graph (no Sugiyama recomputation)
+    let p2Start ← IO.monoNanosNow
+    IO.eprintln s!"  Phase 2: Extracting {uniqueNodeSets.size} subgraph layouts from main graph..."
+    let mut layoutCache : Std.HashMap UInt64 Graph.Layout.LayoutGraph := {}
+    for (nodeHash, nodeIds) in uniqueNodeSets do
+      let subLayout := layoutGraph.extractSubgraph nodeIds layoutConfig
+      layoutCache := layoutCache.insert nodeHash subLayout
+    let p2End ← IO.monoNanosNow
+    IO.eprintln s!"  Phase 2: All extractions complete ({(p2End - p2Start) / 1000000}ms)"
+
+    -- Phase 3: Write SVGs from cached layouts (skip unchanged)
+    let p3Start ← IO.monoNanosNow
+    IO.eprintln s!"  Phase 3: Writing SVG files..."
+    -- Pre-create all directories (must be sequential to avoid races)
+    let mut dirsCreated : Std.HashSet String := {}
+    for (nodeDir, _, _) in workItems do
+      let dirStr := nodeDir.toString
+      if !dirsCreated.contains dirStr then
+        IO.FS.createDirAll nodeDir
+        dirsCreated := dirsCreated.insert dirStr
+    -- Render and write, skipping cached files
+    let mut writeTasks : Array (Task (Except IO.Error Unit)) := #[]
+    let mut subgraphCount : Nat := 0
+    let mut skippedCount : Nat := 0
+    let mut newHashes : Std.HashMap String UInt64 := {}
+    for (nodeDir, filename, nodeHash) in workItems do
+      let path := nodeDir / filename
+      let pathStr := path.toString
+      newHashes := newHashes.insert pathStr nodeHash
+      -- Check cache: skip if hash matches and file exists on disk
+      if previousHashes.get? pathStr == some nodeHash then
+        if (← path.pathExists) then
+          skippedCount := skippedCount + 1
+          subgraphCount := subgraphCount + 1
+          continue
+      if let some layout := layoutCache.get? nodeHash then
+        let ly := layout  -- capture for closure
+        let task ← IO.asTask do
+          let svgContent := Graph.Svg.render ly
+          IO.FS.writeFile path svgContent
+        writeTasks := writeTasks.push task
+        subgraphCount := subgraphCount + 1
+    -- Wait for all writes to complete
+    for task in writeTasks do
+      match task.get with
+      | .ok () => pure ()
+      | .error e => IO.eprintln s!"  Warning: SVG write failed: {e}"
+    let p3End ← IO.monoNanosNow
+    IO.eprintln s!"  Phase 3: Complete ({(p3End - p3Start) / 1000000}ms, {writeTasks.size} written, {skippedCount} cached)"
+    -- Write updated cache manifest
+    writeCacheManifest cacheManifestPath newHashes
+
+    -- Clean stale subgraph directories (nodes no longer in graph)
+    let currentNodeIds : Std.HashSet String := reducedGraph.nodes.foldl
+      (init := {}) fun acc n => acc.insert (Paths.sanitizeLabel n.id)
+    if ← subgraphsDir.pathExists then
+      let entries ← subgraphsDir.readDir
+      for entry in entries do
+        let entryMeta ← entry.path.metadata
+        if entryMeta.type == .dir then
+          let dirName := entry.fileName
+          if !currentNodeIds.contains dirName then
+            -- Stale node directory: remove it
+            let subEntries ← entry.path.readDir
+            for subEntry in subEntries do
+              IO.FS.removeFile subEntry.path
+            IO.FS.removeDir entry.path
 
     IO.println s!"Generated dependency graph:"
     IO.println s!"  SVG: {svgPath}"
@@ -257,7 +353,7 @@ def runGraphCmd (p : Parsed) : IO UInt32 := do
     IO.println s!"  Metadata: {metadataPath}"
     IO.println s!"  Nodes: {layoutGraph.nodes.size}"
     IO.println s!"  Edges: {layoutGraph.edges.size}"
-    IO.println s!"  Subgraphs: {subgraphCount} files in {subgraphsDir}"
+    IO.println s!"  Subgraphs: {subgraphCount} files ({writeTasks.size} written, {skippedCount} cached)"
 
   return 0
 

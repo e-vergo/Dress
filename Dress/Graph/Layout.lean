@@ -88,7 +88,7 @@ structure LayoutConfig where
   /-- Vertical gap between layers (y-axis distance) -/
   layerGap : Float := 100.0
   /-- Horizontal gap between nodes in the same layer (x-axis distance) -/
-  nodeGap : Float := 40.0
+  nodeGap : Float := 20.0
   /-- Padding around the graph -/
   padding : Float := 20.0
   /-- Pixels per character for dynamic node width -/
@@ -96,6 +96,54 @@ structure LayoutConfig where
   /-- Number of barycenter iterations for crossing reduction -/
   barycenterIterations : Nat := 4
   deriving Repr, Inhabited
+
+/-- Extract a subgraph from a laid-out graph by filtering to the given node IDs.
+    Re-centers coordinates so the subgraph content starts at (padding, padding).
+    This avoids re-running Sugiyama layout — positions are inherited from the
+    main graph. -/
+def LayoutGraph.extractSubgraph (lg : LayoutGraph) (nodeIds : Std.HashSet String)
+    (config : LayoutConfig := {}) : LayoutGraph := Id.run do
+  let subNodes := lg.nodes.filter (fun ln => nodeIds.contains ln.node.id)
+  let subEdges := lg.edges.filter (fun le => nodeIds.contains le.from_ && nodeIds.contains le.to)
+  if subNodes.isEmpty then
+    return { nodes := #[], edges := #[], width := 0, height := 0 }
+  -- Compute bounding box of filtered nodes, edge control points, and text labels.
+  -- Text labels rendered with text-anchor="middle" can extend beyond the node rect,
+  -- and arrowhead markers extend ~10px beyond edge endpoints.
+  let mut minX := subNodes[0]!.x
+  let mut minY := subNodes[0]!.y
+  let mut maxX := subNodes[0]!.x + subNodes[0]!.width
+  let mut maxY := subNodes[0]!.y + subNodes[0]!.height
+  for n in subNodes do
+    -- Node text is centered at (x + width/2) with width ≈ charWidth * label.length.
+    -- The node rect is sized to fit, but account for any label overflow.
+    let labelWidth := n.node.label.length.toFloat * config.charWidth
+    let cx := n.x + n.width / 2
+    let textLeft := cx - labelWidth / 2
+    let textRight := cx + labelWidth / 2
+    if textLeft < minX then minX := textLeft
+    if n.y < minY then minY := n.y
+    if textRight > maxX then maxX := textRight
+    if n.x + n.width > maxX then maxX := n.x + n.width
+    if n.y + n.height > maxY then maxY := n.y + n.height
+  -- Include edge bezier control points and arrowhead extent in bounding box
+  let arrowBuffer : Float := 12.0  -- SVG marker is 10px wide + margin
+  for e in subEdges do
+    for (px, py) in e.points do
+      if px - arrowBuffer < minX then minX := px - arrowBuffer
+      if py - arrowBuffer < minY then minY := py - arrowBuffer
+      if px + arrowBuffer > maxX then maxX := px + arrowBuffer
+      if py + arrowBuffer > maxY then maxY := py + arrowBuffer
+  -- Re-center: shift so content starts at (padding, padding)
+  let offsetX := minX - config.padding
+  let offsetY := minY - config.padding
+  let shiftedNodes := subNodes.map fun n =>
+    { n with x := n.x - offsetX, y := n.y - offsetY }
+  let shiftedEdges := subEdges.map fun e =>
+    { e with points := e.points.map fun (px, py) => (px - offsetX, py - offsetY) }
+  let width := maxX - minX + 2 * config.padding
+  let height := maxY - minY + 2 * config.padding
+  { nodes := shiftedNodes, edges := shiftedEdges, width, height, minX := 0, minY := 0 }
 
 /-- Compute node width based on label length -/
 def computeNodeWidth (config : LayoutConfig) (label : String) : Float :=
@@ -834,17 +882,17 @@ def median (values : Array Float) : Float :=
 
 /-- Get the median position of neighbors in a reference layer.
     For DOT-style layout, we use median instead of mean for robustness. -/
-def medianNeighborPosition (g : Graph) (layerNodes : Array (Array String))
+def medianNeighborPosition (adj : AdjIndex) (layerNodes : Array (Array String))
     (nodeId : String) (layerIdx refLayerIdx : Nat) (forward : Bool) : Option Float :=
   if h1 : layerIdx < layerNodes.size then
     if h2 : refLayerIdx < layerNodes.size then
       let refLayer := layerNodes[refLayerIdx]
 
-      -- Get edges connecting to reference layer
+      -- Get edges connecting to reference layer via O(1) lookup
       let neighborEdges := if forward then
-        g.edges.filter (·.to == nodeId)  -- Incoming edges
+        adj.inEdges nodeId   -- Incoming edges (predecessors)
       else
-        g.edges.filter (·.from_ == nodeId)  -- Outgoing edges
+        adj.outEdges nodeId  -- Outgoing edges (successors)
 
       let refPositions := neighborEdges.filterMap fun e =>
         let neighborId := if forward then e.from_ else e.to
@@ -858,14 +906,14 @@ def medianNeighborPosition (g : Graph) (layerNodes : Array (Array String))
   else none
 
 /-- Order a single layer by median of neighbors in the reference layer -/
-def orderLayerByMedian (g : Graph) (layerNodes : Array (Array String))
+def orderLayerByMedian (adj : AdjIndex) (layerNodes : Array (Array String))
     (layerIdx : Nat) (refLayerIdx : Nat) (forward : Bool) : Array String :=
   if h : layerIdx < layerNodes.size then
     let layer := layerNodes[layerIdx]
 
     -- Calculate median position for each node
     let medians := layer.map fun nodeId =>
-      let med := medianNeighborPosition g layerNodes nodeId layerIdx refLayerIdx forward
+      let med := medianNeighborPosition adj layerNodes nodeId layerIdx refLayerIdx forward
       match med with
       | some m => (nodeId, m)
       | none =>
@@ -877,38 +925,49 @@ def orderLayerByMedian (g : Graph) (layerNodes : Array (Array String))
     medians.qsort (·.2 < ·.2) |>.map (·.1)
   else #[]
 
-/-- Assign layers using longest path from sources -/
-def assignLayers (g : Graph) : LayoutM Unit := do
-  -- Find source nodes (no incoming edges)
-  let sources := g.nodes.filter fun n =>
-    g.edges.all fun e => e.to != n.id
+/-- Assign layers using longest path from sources (Kahn's topological sort).
+    Guarantees: for every edge u → v, layer[v] > layer[u]. -/
+def assignLayers (g : Graph) (adj : AdjIndex) : LayoutM Unit := do
+  -- Compute in-degrees
+  let mut inDegree : Std.HashMap String Nat := {}
+  for node in g.nodes do
+    inDegree := inDegree.insert node.id 0
+  for node in g.nodes do
+    for edge in adj.outEdges node.id do
+      let deg := inDegree.get? edge.to |>.getD 0
+      inDegree := inDegree.insert edge.to (deg + 1)
 
-  -- BFS to assign layers
-  let mut queue := sources.map (·.id)
-  let mut visited : Std.HashSet String := {}
+  -- Initialize layers and seed queue with source nodes (in-degree 0)
+  let mut layers : Std.HashMap String Nat := {}
+  let mut queue : Array String := #[]
+  for node in g.nodes do
+    if (inDegree.get? node.id |>.getD 0) == 0 then
+      queue := queue.push node.id
+      layers := layers.insert node.id 0
 
-  for src in sources.map (·.id) do
-    modify fun s => { s with layers := s.layers.insert src 0 }
-    visited := visited.insert src
-
+  -- Process in topological order: a node is dequeued only after all
+  -- predecessors have been processed, so its layer is the true longest path.
   while !queue.isEmpty do
     let current := queue[0]!
     queue := queue.toSubarray.drop 1 |>.toArray
 
-    let currentLayer := (← get).layers.get? current |>.getD 0
+    let currentLayer := layers.get? current |>.getD 0
 
-    -- Process outgoing edges
-    for edge in g.edges do
-      if edge.from_ == current then
-        let targetLayer := currentLayer + 1
-        let s ← get
-        let existingLayer := s.layers.get? edge.to |>.getD 0
-        if targetLayer > existingLayer then
-          set { s with layers := s.layers.insert edge.to targetLayer }
+    for edge in adj.outEdges current do
+      -- Update target's layer to be at least currentLayer + 1
+      let existingLayer := layers.get? edge.to |>.getD 0
+      let newLayer := max existingLayer (currentLayer + 1)
+      layers := layers.insert edge.to newLayer
 
-        if !visited.contains edge.to then
-          visited := visited.insert edge.to
-          queue := queue.push edge.to
+      -- Decrement in-degree; enqueue when all predecessors are processed
+      let deg := inDegree.get? edge.to |>.getD 1
+      let newDeg := deg - 1
+      inDegree := inDegree.insert edge.to newDeg
+      if newDeg == 0 then
+        queue := queue.push edge.to
+
+  -- Store layers in state
+  modify fun s => { s with layers }
 
   -- Build layer arrays
   let s ← get
@@ -924,7 +983,7 @@ def assignLayers (g : Graph) : LayoutM Unit := do
 
 /-- Order a single layer by barycenter of neighbors in the reference layer
     forward=true means reference is previous layer (i-1), false means next layer (i+1) -/
-def orderLayerByNeighbors (g : Graph) (layerNodes : Array (Array String))
+def orderLayerByNeighbors (adj : AdjIndex) (layerNodes : Array (Array String))
     (layerIdx : Nat) (refLayerIdx : Nat) (forward : Bool) : Array String :=
   let layer := layerNodes[layerIdx]!
   let refLayer := layerNodes[refLayerIdx]!
@@ -933,10 +992,10 @@ def orderLayerByNeighbors (g : Graph) (layerNodes : Array (Array String))
   let barycenters := layer.map fun nodeId =>
     let neighborEdges := if forward then
       -- Forward pass: look at incoming edges (neighbors in previous layer)
-      g.edges.filter (·.to == nodeId)
+      adj.inEdges nodeId
     else
       -- Backward pass: look at outgoing edges (neighbors in next layer)
-      g.edges.filter (·.from_ == nodeId)
+      adj.outEdges nodeId
 
     let refPositions := neighborEdges.filterMap fun e =>
       let neighborId := if forward then e.from_ else e.to
@@ -961,20 +1020,20 @@ def orderLayerByNeighbors (g : Graph) (layerNodes : Array (Array String))
     For large graphs (>100 nodes), reduce iterations and skip transpose passes.
     The transpose heuristic is O(L × N × swaps) per call, and gets called
     2× per iteration. For 530 nodes this adds up quickly. -/
-def orderLayers (g : Graph) (iterations : Nat) : LayoutM Unit := do
+def orderLayers (g : Graph) (adj : AdjIndex) (iterations : Nat) : LayoutM Unit := do
   let s ← get
   let mut layerNodes := s.layerNodes
 
-  -- OPTIMIZATION: For large graphs, reduce iterations and skip transpose
+  -- OPTIMIZATION: For very large graphs, reduce iterations and skip transpose
   let totalNodes := layerNodes.foldl (fun acc layer => acc + layer.size) 0
-  let isLargeGraph : Bool := totalNodes > 100
+  let isLargeGraph : Bool := totalNodes > 200
   let effectiveIterations := if isLargeGraph then min iterations 2 else iterations
 
   -- Run multiple iterations alternating forward and backward passes
   for _iter in [0:effectiveIterations] do
     -- Forward pass: order each layer by median of previous layer neighbors
     for i in [1:layerNodes.size] do
-      let sorted := orderLayerByMedian g layerNodes i (i-1) true
+      let sorted := orderLayerByMedian adj layerNodes i (i-1) true
       layerNodes := layerNodes.set! i sorted
 
     -- Apply transpose heuristic after forward pass (skip for large graphs)
@@ -984,7 +1043,7 @@ def orderLayers (g : Graph) (iterations : Nat) : LayoutM Unit := do
     -- Backward pass: order each layer by median of next layer neighbors
     if layerNodes.size > 1 then
       for i in List.range (layerNodes.size - 1) |>.reverse do
-        let sorted := orderLayerByMedian g layerNodes i (i+1) false
+        let sorted := orderLayerByMedian adj layerNodes i (i+1) false
         layerNodes := layerNodes.set! i sorted
 
     -- Apply transpose heuristic after backward pass (skip for large graphs)
@@ -996,27 +1055,27 @@ def orderLayers (g : Graph) (iterations : Nat) : LayoutM Unit := do
 /-! ## Median-Based Coordinate Assignment (for top-to-bottom layout) -/
 
 /-- Get all neighbor X positions for a node (from all connected layers) -/
-def getNeighborXPositions (g : Graph) (positions : Std.HashMap String (Float × Float))
+def getNeighborXPositions (adj : AdjIndex) (positions : Std.HashMap String (Float × Float))
     (nodeId : String) : Array Float := Id.run do
   let mut xPositions : Array Float := #[]
 
-  -- Get neighbors from incoming edges
-  for edge in g.edges do
-    if edge.to == nodeId then
-      match positions.get? edge.from_ with
-      | some (x, _) => xPositions := xPositions.push x
-      | none => pure ()
-    if edge.from_ == nodeId then
-      match positions.get? edge.to with
-      | some (x, _) => xPositions := xPositions.push x
-      | none => pure ()
+  -- Get neighbors from incoming edges via O(1) lookup
+  for edge in adj.inEdges nodeId do
+    match positions.get? edge.from_ with
+    | some (x, _) => xPositions := xPositions.push x
+    | none => pure ()
+  -- Get neighbors from outgoing edges via O(1) lookup
+  for edge in adj.outEdges nodeId do
+    match positions.get? edge.to with
+    | some (x, _) => xPositions := xPositions.push x
+    | none => pure ()
 
   return xPositions
 
 /-- Calculate ideal X position based on median of all neighbor X positions -/
-def idealXPosition (g : Graph) (positions : Std.HashMap String (Float × Float))
+def idealXPosition (adj : AdjIndex) (positions : Std.HashMap String (Float × Float))
     (nodeId : String) : Option Float :=
-  let neighborXs := getNeighborXPositions g positions nodeId
+  let neighborXs := getNeighborXPositions adj positions nodeId
   if neighborXs.isEmpty then
     none
   else
@@ -1065,13 +1124,11 @@ def resolveOverlaps (layer : Array String) (positions : Std.HashMap String (Floa
   return result
 
 /-- Count the number of edges connected to a node (degree) -/
-def nodeDegree (g : Graph) (nodeId : String) : Nat :=
-  g.edges.foldl (fun count e =>
-    let inc := if e.from_ == nodeId || e.to == nodeId then 1 else 0
-    count + inc) 0
+def nodeDegree (adj : AdjIndex) (nodeId : String) : Nat :=
+  (adj.outEdges nodeId).size + (adj.inEdges nodeId).size
 
 /-- Single pass of position refinement: move nodes toward neighbor medians -/
-def refinePositionsPass (g : Graph) (layerNodes : Array (Array String))
+def refinePositionsPass (adj : AdjIndex) (layerNodes : Array (Array String))
     (positions : Std.HashMap String (Float × Float))
     (nodeWidths : Std.HashMap String Float) (config : LayoutConfig)
     (forward : Bool) : Std.HashMap String (Float × Float) := Id.run do
@@ -1087,12 +1144,12 @@ def refinePositionsPass (g : Graph) (layerNodes : Array (Array String))
 
     -- Calculate ideal positions for this layer
     for nodeId in layer do
-      match (result.get? nodeId, idealXPosition g result nodeId) with
+      match (result.get? nodeId, idealXPosition adj result nodeId) with
       | (some (currentX, y), some idealX) =>
         -- Apply stronger pull for isolated nodes (degree <= 2)
         -- This ensures nodes with few connections stay close to their neighbors
-        let degree := nodeDegree g nodeId
-        let pullFactor := if degree <= 2 then 1.0 else 0.7
+        let degree := nodeDegree adj nodeId
+        let pullFactor := if degree <= 2 then 1.0 else 0.85
         -- Interpolate between current and ideal position
         let newX := currentX + pullFactor * (idealX - currentX)
         result := result.insert nodeId (newX, y)
@@ -1104,7 +1161,7 @@ def refinePositionsPass (g : Graph) (layerNodes : Array (Array String))
   return result
 
 /-- Iteratively refine positions to achieve organic layout -/
-def refinePositions (g : Graph) (config : LayoutConfig) (refinementIterations : Nat) : LayoutM Unit := do
+def refinePositions (adj : AdjIndex) (config : LayoutConfig) (refinementIterations : Nat) : LayoutM Unit := do
   let s ← get
   let mut positions := s.positions
 
@@ -1112,9 +1169,9 @@ def refinePositions (g : Graph) (config : LayoutConfig) (refinementIterations : 
   let iterations := max refinementIterations 12
   for _iter in [0:iterations] do
     -- Forward pass
-    positions := refinePositionsPass g s.layerNodes positions s.nodeWidths config true
+    positions := refinePositionsPass adj s.layerNodes positions s.nodeWidths config true
     -- Backward pass
-    positions := refinePositionsPass g s.layerNodes positions s.nodeWidths config false
+    positions := refinePositionsPass adj s.layerNodes positions s.nodeWidths config false
 
   set { s with positions }
 
@@ -1170,12 +1227,12 @@ def assignInitialCoordinates (g : Graph) (config : LayoutConfig) : LayoutM Unit 
     1. Initial grid-based placement
     2. Iterative refinement toward neighbor medians
     3. Overlap resolution -/
-def assignCoordinates (g : Graph) (config : LayoutConfig) : LayoutM Unit := do
+def assignCoordinates (g : Graph) (adj : AdjIndex) (config : LayoutConfig) : LayoutM Unit := do
   -- Step 1: Initial grid-based placement
   assignInitialCoordinates g config
 
   -- Step 2: Refine positions toward neighbor medians (5 iterations)
-  refinePositions g config 5
+  refinePositions adj config 5
 
 /-- Create layout edges with simple bezier control points (no obstacle avoidance).
     - Calculate line from center of source to center of target
@@ -1441,11 +1498,15 @@ def layout (g : Graph) (config : LayoutConfig := {}) : LayoutGraph := Id.run do
   -- Step 1: Make graph acyclic by reversing back-edges
   let (acyclicGraph, _reversedEdges) := makeAcyclic g
 
+  -- Step 1.5: Build adjacency index AFTER acyclic transformation
+  -- so it reflects the correct edge directions
+  let adj := acyclicGraph.buildAdjIndex
+
   -- Step 2: Perform layout on the acyclic graph
   let (_, state) := (do
-    Algorithm.assignLayers acyclicGraph
-    Algorithm.orderLayers acyclicGraph config.barycenterIterations
-    Algorithm.assignCoordinates acyclicGraph config
+    Algorithm.assignLayers acyclicGraph adj
+    Algorithm.orderLayers acyclicGraph adj config.barycenterIterations
+    Algorithm.assignCoordinates acyclicGraph adj config
   ).run {}
 
   -- Step 3: Calculate content bounding box from raw positions
