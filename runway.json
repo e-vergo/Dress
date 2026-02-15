@@ -1,0 +1,9 @@
+{
+  "title": "Dress: Artifact Generation & Graph Layout",
+  "projectName": "DressBlueprint",
+  "githubUrl": "https://github.com/e-vergo/Dress",
+  "baseUrl": "/Dress/",
+  "docgen4Url": null,
+  "runwayDir": "runway",
+  "assetsDir": "../dress-blueprint-action/assets"
+}

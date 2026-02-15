@@ -12,6 +12,11 @@ lean_exe extract_blueprint where
   root := `Main
   supportInterpreter := true
 
+lean_lib DressBlueprint
+
+lean_exe «generate-blueprint-verso» where
+  root := `GenerateBlueprint
+
 require LeanArchitect from git
   "https://github.com/e-vergo/LeanArchitect.git" @ "main"
 

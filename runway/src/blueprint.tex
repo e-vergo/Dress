@@ -1,0 +1,1562 @@
+\input{../../.lake/build/dressed/library/DressBlueprint.tex}
+
+\title{Dress: Artifact Generation and Graph Layout}
+\author{Eric Vergo}
+\maketitle
+
+% =============================================================================
+\chapter{Introduction}
+\label{ch:intro}
+% =============================================================================
+
+Dress is the artifact generation and dependency graph layout engine of the
+Side-by-Side Blueprint (SBS) toolchain. Given a Lean~4 project whose
+declarations carry the \texttt{@[blueprint]} attribute, Dress transforms each
+annotated declaration into a collection of per-declaration artifacts---LaTeX,
+HTML with syntax highlighting, and JSON metadata---and constructs a dependency
+graph with hierarchical layout suitable for interactive visualization.
+
+The name is a backronym: \emph{Dressed} code is bare Lean source augmented
+with the rich metadata captured during elaboration---semantic highlighting
+from SubVerso, pre-rendered HTML from Verso, type signatures, source
+positions, and pre-computed base64 strings ready for embedding in \TeX{}
+documents.
+
+\section{Two-Phase Architecture}
+
+Dress operates in two distinct phases, each driven by a fundamental constraint
+of the Lean~4 elaboration model.
+
+\begin{itemize}
+\item \textbf{Phase 1: Elaboration-time capture.} During \texttt{lake build},
+  Dress intercepts every \texttt{@[blueprint]} declaration via custom
+  \texttt{elab\_rules}. After standard elaboration completes---but while the
+  info trees still reside in \texttt{commandState.infoState.trees}---Dress
+  invokes SubVerso to extract semantic highlighting. Info trees are ephemeral:
+  they are discarded once elaboration of a command finishes, so capture must
+  happen immediately. The resulting artifacts are written to per-declaration
+  directories under \texttt{.lake/build/dressed/}.
+
+\item \textbf{Phase 2: Post-elaboration aggregation.} After all modules have
+  been compiled, Lake facets aggregate the per-declaration artifacts. Dress's
+  CLI command \texttt{extract\_blueprint graph} reads the aggregated data,
+  infers inter-declaration dependencies, constructs the dependency graph,
+  validates it, computes the Sugiyama hierarchical layout, and writes the
+  final manifest, SVG, and JSON output consumed by the site generator (Runway).
+\end{itemize}
+
+This two-phase design is not a choice but a necessity. SubVerso highlighting
+consumes 93--99\% of build time, and deferring it to a post-compilation step
+is impossible because the info trees no longer exist.
+
+\section{Module Organization}
+
+Dress comprises 311 annotated declarations organized across the following
+module groups:
+
+\begin{itemize}
+\item \textbf{Core} (\texttt{Dress.Core}, \texttt{Dress.Paths},
+  \texttt{Dress.Base64}, \texttt{Dress.Cache}, \texttt{Dress.Content}):
+  Foundational types, path management, encoding, caching, and content ordering.
+\item \textbf{Capture} (\texttt{Dress.Capture.*}, \texttt{Dress.Hook},
+  \texttt{Dress.Highlighting}): Elaboration-time interception and SubVerso
+  integration.
+\item \textbf{Generate} (\texttt{Dress.Generate.*}): Per-declaration artifact
+  writing with content-based caching.
+\item \textbf{Graph} (\texttt{Dress.Graph.*}): Dependency graph types,
+  construction, validation, Sugiyama layout, subgraph extraction, and SVG
+  rendering.
+\item \textbf{Render} (\texttt{Dress.Render.*}): Side-by-side display
+  rendering for blueprint and paper variants.
+\item \textbf{Serialize} (\texttt{Dress.Serialize.*}): JSON and HTML
+  serialization formats.
+\item \textbf{SVG} (\texttt{Dress.Svg.*}): A composable SVG generation
+  library with coordinate system support.
+\item \textbf{Output} (\texttt{Dress.Output}): LaTeX and JSON output
+  pipelines, module and library aggregation.
+\end{itemize}
+
+
+% =============================================================================
+\chapter{Core Types and Path Management}
+\label{ch:core}
+% =============================================================================
+
+The core of Dress centers on \texttt{NodeWithPos}, which extends the
+\texttt{Architect.Node} type defined by LeanArchitect with elaboration-time
+metadata: source positions, SubVerso highlighting, and pre-rendered HTML.
+
+\section{NodeWithPos}
+
+\inputleannode{dr:node-with-pos}
+
+The \texttt{NodeWithPos} structure carries three layers of code representation.
+The \texttt{highlightedCode} field stores SubVerso's \texttt{Highlighted}
+AST---a structured representation of syntax-highlighted tokens. The
+\texttt{htmlCode} field stores pre-rendered HTML produced by Verso's
+\texttt{toHtmlRainbow} renderer. Each representation exists in triplicate:
+full declaration, signature only (up to and including \texttt{:=}), and proof
+body (after \texttt{:=}).
+
+The split between signature and proof body is performed by
+\texttt{splitAtDefinitionAssign}:
+
+\inputleannode{dr:split-at-definition-assign}
+
+This function implements bracket-aware parsing: it locates the definition
+keyword (\texttt{def}, \texttt{theorem}, \texttt{lemma}, etc.), then scans
+for \texttt{:=} at bracket depth zero. The zero-depth constraint prevents
+false matches on \texttt{:=} tokens inside parenthesized expressions or
+\texttt{where} clauses. When \texttt{:=} is followed by \texttt{by}, the
+\texttt{by} token is included in the signature rather than the proof body.
+
+\inputleannode{dr:to-dress-node-with-pos}
+
+\section{Path Management}
+\label{sec:paths}
+
+All artifact paths are centralized in the \texttt{Dress.Paths} module to
+prevent duplication and ensure consistency across the codebase. The output
+directory structure mirrors the Lean module hierarchy:
+
+\begin{verbatim}
+.lake/build/dressed/
++-- manifest.json
++-- {Module/Path}/
+    +-- module.json
+    +-- module.tex
+    +-- {sanitized-label}/
+        +-- decl.tex
+        +-- decl.html
+        +-- decl.json
+        +-- decl.hovers.json
+        +-- manifest.entry
+\end{verbatim}
+
+\inputleannode{dr:paths-sanitize-label}
+
+Label sanitization replaces colons with hyphens for filesystem
+compatibility---a label like \texttt{thm:main} becomes the directory name
+\texttt{thm-main}. This same normalization is applied consistently in CSS
+selectors and JavaScript \texttt{querySelector} calls.
+
+\inputleannode{dr:paths-get-declaration-dir}
+
+\inputleannode{dr:paths-get-declaration-tex-path}
+
+\inputleannode{dr:paths-get-module-dressed-dir}
+
+\inputleannode{dr:paths-build-module-path}
+
+For LaTeX \texttt{\textbackslash input\{\}} commands, paths must be relative
+to the \texttt{blueprint/src/} directory where plasTeX expects to find them.
+The \texttt{../../} prefix accounts for the two directory levels from
+\texttt{blueprint/src/} back to the project root:
+
+\inputleannode{dr:paths-get-declaration-dir-for-latex}
+
+\inputleannode{dr:paths-get-module-dir-for-latex}
+
+The manifest system aggregates per-declaration entries into a single
+\texttt{manifest.json} that maps labels to their paths:
+
+\inputleannode{dr:paths-get-manifest-path}
+
+\inputleannode{dr:paths-get-manifest-entry-path}
+
+\inputleannode{dr:paths-get-declaration-relative-path}
+
+\section{Base64 Encoding}
+
+Highlighted code and pre-rendered HTML must be embedded inside LaTeX macros
+such as \texttt{\textbackslash leansourcehtml\{\}}. Since these strings
+contain arbitrary HTML (angle brackets, ampersands, braces), they are base64
+encoded to avoid conflicts with LaTeX's special characters.
+
+\inputleannode{dr:base64-encode}
+
+\inputleannode{dr:base64-encode-string}
+
+The encoding follows RFC~4648, processing input in 3-byte groups to produce
+4 base64 characters each, with \texttt{=} padding as needed.
+
+\section{Content-Based Caching}
+
+SubVerso highlighting is expensive---it dominates build time. To avoid
+redundant regeneration when declarations have not changed, Dress implements
+content-based caching keyed on a hash of the declaration's name, attribute
+fields, source location, and highlighting data.
+
+\inputleannode{dr:cache-compute-declaration-hash}
+
+\inputleannode{dr:cache-check-cache}
+
+\inputleannode{dr:cache-restore-from-cache}
+
+\inputleannode{dr:cache-save-to-cache}
+
+\inputleannode{dr:cache-get-cache-path}
+
+On cache hit, the five artifact files are copied directly from the cache
+directory to the target location, bypassing HTML rendering and JSON
+serialization entirely. On cache miss, artifacts are generated and saved to
+the cache for future builds.
+
+\section{Blueprint Content}
+
+The \texttt{BlueprintContent} type represents the exportable contents of a
+module: either a blueprint node (an \texttt{@[blueprint]}-annotated
+declaration) or a module docstring.
+
+\inputleannode{dr:blueprint-content}
+
+\inputleannode{dr:blueprint-content-order}
+
+\inputleannode{dr:blueprint-content-declaration-range}
+
+Contents are sorted by declaration range so that the generated LaTeX preserves
+the source-file ordering of declarations and documentation. This sorting
+mirrors the approach used by doc-gen4 for its \texttt{ModuleMember} type.
+
+\inputleannode{dr:get-main-module-blueprint-contents}
+
+\inputleannode{dr:get-blueprint-contents}
+
+
+% =============================================================================
+\chapter{Elaboration-Time Capture}
+\label{ch:capture}
+% =============================================================================
+
+The capture subsystem is the most timing-critical component of Dress. It must
+intercept every \texttt{@[blueprint]} declaration, run standard elaboration,
+and then capture SubVerso highlighting---all before the info trees are
+discarded.
+
+\section{Architecture}
+
+The capture pipeline proceeds as follows for each \texttt{@[blueprint]}
+declaration:
+
+\begin{enumerate}
+\item An \texttt{elab\_rules} handler detects the \texttt{@[blueprint]}
+  attribute on the declaration's modifiers.
+\item The handler calls \texttt{elabDeclAndCaptureHighlighting}, which:
+  \begin{enumerate}
+  \item Sets the capture hook flag to prevent infinite recursion (since the
+    handler will re-elaborate the same syntax).
+  \item Calls \texttt{elabCommandTopLevel} to run standard Lean elaboration.
+  \item Immediately invokes \texttt{captureHighlighting} to extract SubVerso
+    tokens from the live info trees.
+  \item Writes per-declaration artifacts (\texttt{.tex}, \texttt{.html},
+    \texttt{.json}) to disk.
+  \end{enumerate}
+\item The capture hook flag is cleared.
+\end{enumerate}
+
+\section{Elaboration Rules}
+
+Dress provides \texttt{elab\_rules} for every declaration form that can carry
+\texttt{@[blueprint]}: theorems, definitions, abbreviations, structures,
+classes, inductives, and instances. Each rule checks for the attribute,
+delegates to the shared capture function, and falls back to
+\texttt{throwUnsupportedSyntax} for non-blueprint declarations (allowing
+Lean's standard elaborators to handle them).
+
+\inputleannode{dr:elab-blueprint-declaration}
+
+\inputleannode{dr:elab-decl-and-capture}
+
+The recursion guard (\texttt{inCaptureHookM} / \texttt{withCaptureHookFlag})
+is essential: when \texttt{elabCommandTopLevel} re-elaborates the syntax, it
+would trigger the same \texttt{elab\_rules} again without this guard.
+
+\inputleannode{dr:in-capture-hook}
+
+\inputleannode{dr:in-capture-hook-m}
+
+\inputleannode{dr:with-capture-hook-flag}
+
+\inputleannode{dr:get-decl-name-from-decl-id}
+
+\inputleannode{dr:has-blueprint-attr}
+
+\section{Info Tree Capture}
+
+The core capture function extracts SubVerso highlighting from the info trees
+in the current command state. It uses module-level caches---a suffix index
+and a highlight cache---to amortize work across declarations within the same
+module.
+
+\inputleannode{dr:capture-highlighting-from-info-trees}
+
+The suffix index is an $O(1)$ lookup table built from
+\texttt{env.constants}. Without it, each declaration would perform an
+$O(E)$ fold over the entire constant map (where $E$ can exceed $100{,}000$
+for mathlib-heavy projects). The index is built once per module and reused:
+
+\inputleannode{dr:get-or-build-suffix-index}
+
+\inputleannode{dr:module-suffix-index-ref}
+
+Similarly, the module-level highlight cache stores expression and signature
+renderings keyed by type hash, avoiding redundant SubVerso work for
+declarations with identical types:
+
+\inputleannode{dr:get-or-create-module-cache-ref}
+
+\inputleannode{dr:module-cache-ref}
+
+The lazy capture variant checks the cache before performing full highlighting:
+
+\inputleannode{dr:lazy-capture-highlighting}
+
+\inputleannode{dr:capture-highlighting}
+
+\section{Incremental Capture Statistics}
+
+The incremental capture system tracks statistics to measure cache
+effectiveness:
+
+\inputleannode{dr:incremental-capture-state}
+
+\inputleannode{dr:incremental-state-ref}
+
+\inputleannode{dr:get-incremental-stats}
+
+\inputleannode{dr:reset-module-caches}
+
+Module caches must be reset at module boundaries to prevent stale data from
+one module leaking into the next.
+
+\section{Retroactive Annotation Support}
+
+Not all declarations are annotated at definition time. The
+\texttt{\#dressNodes} command supports retroactive
+\texttt{attribute [blueprint ...] Name} annotations by scanning the current
+environment for blueprint nodes that lack per-declaration artifacts.
+
+\section{Highlighting Infrastructure}
+
+The \texttt{Dress.Highlighting} module provides the lower-level highlighting
+functions that interface directly with SubVerso:
+
+\inputleannode{dr:highlight-source}
+
+\inputleannode{dr:highlight-declaration}
+
+\inputleannode{dr:mk-minimal-source}
+
+\inputleannode{dr:run-command}
+
+\inputleannode{dr:get-suppressed-namespaces}
+
+\section{SubVerso Integration and Hook Mechanism}
+
+The Hook module re-exports capture infrastructure and provides the
+higher-level serialization and loading functions used by downstream consumers:
+
+\inputleannode{dr:capture-hook-ref}
+
+\inputleannode{dr:dressed-decl-ext}
+
+\inputleannode{dr:get-module-highlighting}
+
+\inputleannode{dr:add-highlighting}
+
+\inputleannode{dr:get-highlighting-output-path}
+
+\inputleannode{dr:get-highlighting-html-output-path}
+
+\inputleannode{dr:write-module-highlighting-json}
+
+\inputleannode{dr:write-module-highlighting-html}
+
+\inputleannode{dr:load-module-highlighting}
+
+\inputleannode{dr:load-module-highlighting-html}
+
+\inputleannode{dr:write-highlighting-json}
+
+\inputleannode{dr:write-highlighting-html}
+
+\inputleannode{dr:load-highlighting-from-file}
+
+\inputleannode{dr:load-highlighting-html}
+
+\inputleannode{dr:load-highlighting-with-fallback}
+
+
+% =============================================================================
+\chapter{Artifact Generation}
+\label{ch:generate}
+% =============================================================================
+
+Once highlighting has been captured, Dress writes per-declaration artifacts
+to disk. Each \texttt{@[blueprint]} declaration receives its own subdirectory
+containing four to five files:
+\begin{itemize}
+\item \texttt{decl.tex}: The LaTeX fragment for embedding in the blueprint
+  document.
+\item \texttt{decl.html}: Syntax-highlighted HTML with Verso rainbow bracket
+  rendering.
+\item \texttt{decl.json}: JSON metadata including the SubVerso
+  \texttt{Highlighted} AST.
+\item \texttt{decl.hovers.json}: Hover tooltip data for interactive displays.
+\item \texttt{manifest.entry}: A small JSON entry for manifest aggregation.
+\end{itemize}
+
+\section{Per-Declaration Artifact Writing}
+
+The main entry point for artifact generation is
+\texttt{writeDeclarationArtifactsFromNode}, which integrates the content-based
+cache described in Chapter~\ref{ch:core}:
+
+\inputleannode{dr:write-decl-artifacts-from-node}
+
+On cache miss, the actual generation is performed by \texttt{generateArtifacts}
+(internal), which times each sub-operation for profiling.
+
+\section{LaTeX Generation}
+
+The LaTeX fragment for each declaration includes the label, Lean name
+references, position annotations, and base64-encoded highlighting data. The
+\texttt{toLatex} function (defined in the \texttt{Architect} namespace for
+dot-notation compatibility) produces the complete LaTeX content:
+
+\inputleannode{dr:node-to-latex}
+
+\inputleannode{dr:node-to-latex-artifact}
+
+The generated LaTeX includes several macros consumed by plasTeX and the
+Runway site generator:
+\begin{itemize}
+\item \texttt{\textbackslash label\{...\}}: The node's LaTeX label for
+  cross-referencing.
+\item \texttt{\textbackslash lean\{...\}}: Comma-separated list of Lean
+  declaration names.
+\item \texttt{\textbackslash leansource\{...\}}: Base64-encoded SubVerso
+  JSON (backward compatibility).
+\item \texttt{\textbackslash leansourcehtml\{...\}}: Base64-encoded
+  pre-rendered HTML.
+\item \texttt{\textbackslash leansignaturesource\{...\}} and
+  \texttt{\textbackslash leansignaturesourcehtml\{...\}}: Signature-only
+  variants.
+\item \texttt{\textbackslash leanproofsource\{...\}} and
+  \texttt{\textbackslash leanproofsourcehtml\{...\}}: Proof-body variants.
+\item \texttt{\textbackslash leanposition\{...\}}: Source file and position
+  range.
+\item \texttt{\textbackslash leanabove\{...\}} and
+  \texttt{\textbackslash leanbelow\{...\}}: Narrative content for contextual
+  display.
+\end{itemize}
+
+\section{LaTeX Declaration Generation}
+
+\inputleannode{dr:generate-decl-tex-from-node}
+
+\inputleannode{dr:latex-preamble}
+
+\inputleannode{dr:get-default-latex-env}
+
+\section{Serialization}
+
+The serialization layer provides JSON and HTML output formats:
+
+\inputleannode{dr:highlighted-to-json}
+
+\inputleannode{dr:highlighting-map-to-html-json}
+
+\inputleannode{dr:highlighting-map-to-module-json}
+
+\inputleannode{dr:write-json-file}
+
+\inputleannode{dr:write-json-file-compact}
+
+\inputleannode{dr:write-json-atomic}
+
+\inputleannode{dr:to-dressed-artifacts-json}
+
+\inputleannode{dr:write-dressed-artifacts}
+
+\section{HTML Rendering}
+
+The HTML rendering pipeline converts SubVerso's \texttt{Highlighted} AST into
+HTML strings suitable for browser display:
+
+\inputleannode{dr:html-render-to-html}
+
+\inputleannode{dr:html-render-with-hovers}
+
+\inputleannode{dr:html-render-with-state}
+
+\inputleannode{dr:html-render-context}
+
+\inputleannode{dr:html-render-inline}
+
+\inputleannode{dr:html-render-block}
+
+\inputleannode{dr:hover-data-attr}
+
+\section{SubVerso Extract Module Integration}
+
+For imported modules whose info trees are no longer available, Dress uses
+SubVerso's \texttt{extract-mod} tool to obtain highlighting:
+
+\inputleannode{dr:extract-module-highlighting}
+
+\inputleannode{dr:extract-highlighting-map}
+
+\inputleannode{dr:build-highlighting-map}
+
+\inputleannode{dr:get-declaration-highlighting}
+
+\inputleannode{dr:get-declaration-range}
+
+\inputleannode{dr:get-highlighting-path}
+
+\inputleannode{dr:get-subverso-output-path}
+
+\inputleannode{dr:find-extract-mod-executable}
+
+\inputleannode{dr:default-extract-mod-path}
+
+\inputleannode{dr:run-extract-mod}
+
+\inputleannode{dr:env-of-imports}
+
+\inputleannode{dr:run-env-of-imports}
+
+\inputleannode{dr:extract-blueprint-attr-syntax}
+
+\inputleannode{dr:get-all-declarations}
+
+
+% =============================================================================
+\chapter{Dependency Graph Types}
+\label{ch:types}
+% =============================================================================
+
+The dependency graph is the central data structure for visualizing the logical
+architecture of a formalization project. Dress defines a complete type system
+for graphs including nodes, edges, status tracking, validation results, and
+adjacency indexing.
+
+\section{Node and Edge Types}
+
+\inputleannode{dr:graph-node}
+
+Each node carries metadata from the \texttt{@[blueprint]} attribute: a unique
+label (the LaTeX cross-reference identifier), a display label, the
+environment type (theorem, definition, etc.), the current formalization status,
+and optional user annotations (messages, blocked status, technical debt notes).
+
+\inputleannode{dr:node-shape}
+
+Node shapes encode the mathematical role of a declaration for visual
+distinction in the dependency graph: ellipses for theorems and lemmas,
+rectangles for definitions and structures, and diamonds for axioms.
+
+\inputleannode{dr:graph-edge}
+
+\inputleannode{dr:edge-style}
+
+Edges come in two styles reflecting two kinds of mathematical dependency.
+Solid edges represent proof dependencies---the proof of the target declaration
+uses the source. Dashed edges represent statement dependencies---the
+\emph{statement} of the target mentions the source, but the proof does not
+directly use it. This distinction is automatically inferred by
+LeanArchitect's \texttt{inferUses} function.
+
+\section{Graph Structure}
+
+\inputleannode{dr:graph}
+
+\inputleannode{dr:graph-node-ids}
+
+\inputleannode{dr:graph-get-node}
+
+\inputleannode{dr:graph-out-edges}
+
+\inputleannode{dr:graph-in-edges}
+
+\section{Adjacency Index}
+
+For graphs with hundreds of nodes (PNT has 591), linear edge scans become a
+bottleneck. The \texttt{AdjIndex} structure precomputes outgoing and incoming
+edge lists for $O(1)$ lookup:
+
+\inputleannode{dr:adj-index}
+
+\inputleannode{dr:build-adj-index}
+
+\inputleannode{dr:adj-out-edges}
+
+\inputleannode{dr:adj-in-edges}
+
+\section{Status Tracking}
+
+The six-status color model tracks the formalization progress of each node:
+
+\inputleannode{dr:status-counts}
+
+\inputleannode{dr:compute-status-counts}
+
+The status values and their semantics are:
+\begin{itemize}
+\item \texttt{notReady} (sandy brown): The declaration has no Lean code or is
+  explicitly marked as not ready.
+\item \texttt{ready} (teal): Manually marked as ready for formalization.
+\item \texttt{sorry} (red): The proof exists but contains \texttt{sorryAx}.
+\item \texttt{proven} (light green): Complete proof without sorry.
+\item \texttt{fullyProven} (deep forest green): Proven, and all transitive
+  dependencies are also proven. Computed post-graph-construction.
+\item \texttt{mathlibReady} (blue): Manually marked as ready for upstream
+  contribution to mathlib.
+\end{itemize}
+
+\section{Validation Types}
+
+\inputleannode{dr:check-results}
+
+\inputleannode{dr:soundness-result}
+
+\inputleannode{dr:coverage-result}
+
+\inputleannode{dr:uncovered-decl}
+
+The \texttt{CheckResults} structure aggregates the results of graph validation:
+connectivity (is the graph a single connected component?), cycle detection,
+kernel verification (are all key declarations fully proven?), and blueprint
+coverage (what percentage of project declarations have
+\texttt{@[blueprint]} annotations?).
+
+\section{Transitive Reduction}
+
+For visual clarity, the graph can be transitively reduced---removing edges
+that are implied by longer paths:
+
+\inputleannode{dr:transitive-reduction}
+
+The algorithm uses DFS from each edge's source to check whether the target is
+reachable via an alternative path of length $\geq 2$. The worst-case
+complexity is $O(E \cdot (V + E))$, but it is much faster on the sparse DAGs
+typical of formalization projects. For graphs exceeding 500 nodes, transitive
+reduction is skipped entirely.
+
+
+% =============================================================================
+\chapter{Graph Construction and Analysis}
+\label{ch:build}
+% =============================================================================
+
+Graph construction transforms the flat list of \texttt{@[blueprint]} nodes
+captured during elaboration into a complete dependency graph with inferred
+edges, computed statuses, and validation results.
+
+\section{Builder State Machine}
+
+Construction uses a two-pass builder pattern. Pass~1 registers all labels
+and creates nodes; Pass~2 adds edges. This two-pass approach is necessary
+because an edge's target may not yet be registered when the source is
+processed---for example, a theorem in an early module may depend on a lemma
+defined later.
+
+\inputleannode{dr:builder-state}
+
+\inputleannode{dr:builder-m}
+
+\inputleannode{dr:builder-next-number}
+
+\inputleannode{dr:builder-register-label}
+
+\inputleannode{dr:builder-add-node}
+
+\inputleannode{dr:builder-add-edge}
+
+\section{Status Determination}
+
+Node status follows a priority chain that resolves conflicts between manual
+annotations and automatically derived statuses:
+
+\inputleannode{dr:builder-get-status}
+
+The priority order is: \texttt{mathlibReady} $>$ \texttt{ready} $>$
+explicit \texttt{notReady} $>$ auto-derived (\texttt{proven} if Lean code
+exists without sorry, \texttt{sorry} if sorry is present, \texttt{notReady}
+otherwise). The \texttt{fullyProven} status is not assigned here---it is
+computed in a post-processing step after the full graph is available
+(see Section~\ref{sec:fully-proven}).
+
+\inputleannode{dr:builder-get-shape}
+
+\section{Two-Pass Registration}
+
+\inputleannode{dr:builder-register-node}
+
+\inputleannode{dr:builder-add-node-edges}
+
+\inputleannode{dr:node-build-data}
+
+\section{Graph Assembly}
+
+\inputleannode{dr:build-graph}
+
+The \texttt{buildGraph} function orchestrates the two passes, filters edges
+to valid endpoints, deduplicates edges (keeping the first occurrence of each
+\texttt{(from, to)} pair), and post-processes with \texttt{computeFullyProven}.
+
+\section{FullyProven Computation}
+\label{sec:fully-proven}
+
+A node is \texttt{fullyProven} if (a) it is \texttt{proven} and (b) every
+node in its transitive dependency closure is \texttt{proven} or
+\texttt{fullyProven}. This computation requires the complete graph and
+cannot be done per-node during construction.
+
+\inputleannode{dr:compute-fully-proven}
+
+The algorithm uses an iterative worklist with memoization. For each node, it
+performs a DFS traversal of ancestors (via incoming edges). When all ancestors
+have been resolved, the node's result is computed and memoized. Cycles are
+handled conservatively: if a node is encountered while already being visited
+(cycle detection), it is marked as incomplete. The overall complexity is
+$O(V + E)$ with the memoization table.
+
+\section{Graph Construction from Environment}
+
+\inputleannode{dr:from-environment}
+
+\inputleannode{dr:from-nodes}
+
+\texttt{fromEnvironment} is the primary entry point for graph construction.
+It reads the \texttt{blueprintExt} environment extension, converts each
+\texttt{Architect.Node} to a \texttt{Dress.NodeWithPos}, infers statement
+and proof dependencies via LeanArchitect's \texttt{inferUses}, and delegates
+to \texttt{buildGraph}.
+
+\section{Connectivity Analysis}
+
+\inputleannode{dr:find-components}
+
+Connected components are found via BFS treating the directed graph as
+undirected (traversing both incoming and outgoing edges). This uses the
+precomputed \texttt{AdjIndex} for $O(1)$ edge lookups, giving $O(V + E)$
+overall complexity.
+
+\section{Cycle Detection}
+
+\inputleannode{dr:detect-cycles}
+
+\inputleannode{dr:dfs-state}
+
+\inputleannode{dr:dfs-visit}
+
+Cycles are detected via standard DFS with three-color marking: white
+(unvisited), gray (in current path), black (finished). A gray-to-gray edge
+indicates a back-edge and hence a cycle. The cycle is reconstructed by
+walking the parent chain back to the repeated node.
+
+\section{Validation}
+
+\inputleannode{dr:compute-check-results}
+
+\inputleannode{dr:compute-coverage}
+
+Blueprint coverage enumerates all eligible declarations across all project
+modules, filtering out auto-generated declarations (those with internal
+name components like \texttt{rec}, \texttt{casesOn}, \texttt{mk}), structure
+projections, and non-eligible constant kinds (constructors, recursors,
+quotient constructors). The coverage percentage indicates what fraction of a
+project's declarations are documented with \texttt{@[blueprint]} annotations.
+
+
+% =============================================================================
+\chapter{Hierarchical Layout}
+\label{ch:layout}
+% =============================================================================
+
+The dependency graph must be rendered as a top-to-bottom layered drawing where
+edges flow downward from dependencies to dependents. Dress implements a
+simplified Sugiyama algorithm for this purpose, adapted from the DOT
+algorithm with performance optimizations for large graphs.
+
+\section{Layout Types}
+
+\inputleannode{dr:layout-node}
+
+\inputleannode{dr:layout-edge}
+
+\inputleannode{dr:layout-graph}
+
+\inputleannode{dr:layout-config}
+
+The \texttt{LayoutConfig} specifies the spatial parameters of the layout:
+node dimensions, layer gaps, character width for dynamic label sizing, and
+the number of barycenter iterations for crossing reduction.
+
+\section{Algorithm Overview}
+
+The Sugiyama algorithm proceeds in six phases:
+
+\begin{enumerate}
+\item \textbf{Acyclic transformation}: Identify and reverse back-edges to
+  eliminate cycles.
+\item \textbf{Layer assignment}: Assign each node to a horizontal layer using
+  Kahn's topological sort with longest-path layering.
+\item \textbf{Crossing reduction}: Reorder nodes within each layer to minimize
+  edge crossings using the median heuristic with transpose optimization.
+\item \textbf{Coordinate assignment}: Compute horizontal positions using
+  grid placement with iterative refinement.
+\item \textbf{Edge routing}: Route edges between layers using visibility graphs
+  and Dijkstra's shortest path, with Catmull-Rom to B\'{e}zier curve
+  conversion.
+\item \textbf{Coordinate normalization}: Shift all coordinates so the bounding
+  box starts at $(0, 0)$, which is required for proper SVG centering.
+\end{enumerate}
+
+\section{Acyclic Transformation}
+
+Real formalization projects can have cyclic dependencies (e.g., mutually
+recursive definitions). Before layering, cycles must be broken by reversing
+back-edges.
+
+\inputleannode{dr:find-back-edges}
+
+\inputleannode{dr:make-acyclic}
+
+\inputleannode{dr:reverse-edge}
+
+Back-edges are identified by DFS with a recursion stack: an edge from a node
+to an ancestor in the current DFS path is a back-edge. Unlike some
+implementations that reverse all back-edges simultaneously, Dress reverses
+one edge at a time and re-runs DFS. This iterative approach, borrowed from
+Graphviz, produces more stable results because reversing one edge can
+eliminate multiple cycles.
+
+\section{Layer Assignment}
+
+\inputleannode{dr:assign-layers}
+
+Layer assignment uses Kahn's algorithm (BFS-based topological sort) with
+longest-path layering. Source nodes (in-degree zero) are assigned to layer~0.
+Each subsequent node is assigned to layer $\max(\text{layer}[u] + 1)$ over all
+predecessors $u$. This ensures that for every edge $u \to v$,
+$\text{layer}[v] > \text{layer}[u]$.
+
+\section{Crossing Reduction}
+
+The crossing reduction phase reorders nodes within each layer to minimize
+the number of edge crossings. This is an NP-hard problem in general; Dress
+uses the median heuristic as an effective approximation.
+
+\inputleannode{dr:order-layers}
+
+\inputleannode{dr:order-layer-by-median}
+
+\inputleannode{dr:median-neighbor-position}
+
+\inputleannode{dr:median}
+
+The algorithm alternates between forward passes (ordering each layer based on
+median positions in the previous layer) and backward passes (ordering based on
+the next layer). After each pair of passes, the transpose heuristic attempts
+local improvements by swapping adjacent nodes:
+
+\inputleannode{dr:transpose-pass}
+
+\inputleannode{dr:try-swap-adjacent}
+
+\inputleannode{dr:count-crossings}
+
+\inputleannode{dr:count-total-crossings}
+
+Edge crossings between adjacent layers are counted by the inversion method:
+edges $(u_1, v_1)$ and $(u_2, v_2)$ cross if and only if the order of
+endpoints is inverted between the two layers
+($u_1 < u_2 \wedge v_1 > v_2$ or $u_1 > u_2 \wedge v_1 < v_2$).
+
+\section{Coordinate Assignment}
+
+\inputleannode{dr:assign-coordinates}
+
+\inputleannode{dr:assign-initial-coordinates}
+
+\inputleannode{dr:compute-node-width}
+
+\inputleannode{dr:get-neighbor-x-positions}
+
+\inputleannode{dr:ideal-x-position}
+
+\inputleannode{dr:refine-positions}
+
+\inputleannode{dr:refine-positions-pass}
+
+\inputleannode{dr:resolve-overlaps}
+
+Coordinates are assigned in two stages. Initial placement distributes nodes
+evenly within each layer with dynamic widths based on label length. Iterative
+refinement then shifts nodes toward their neighbors' median positions while
+resolving overlaps. This heuristic produces good results for the sparse DAGs
+typical of formalization projects.
+
+\section{Edge Routing}
+
+For small graphs ($\leq 100$ nodes), edges are routed through a visibility
+graph to avoid passing through nodes. For larger graphs, simple B\'{e}zier
+curves are used instead.
+
+\inputleannode{dr:create-layout-edges}
+
+\inputleannode{dr:create-layout-edges-simple}
+
+\subsection{Visibility Graph}
+
+The visibility graph connects all pairs of points that have unobstructed
+line-of-sight. Points include the edge source and target (clipped to node
+boundaries) plus obstacle vertices (corners of rectangular nodes, octant
+points of elliptical nodes):
+
+\inputleannode{dr:build-visibility-graph}
+
+\inputleannode{dr:collect-visibility-vertices}
+
+\inputleannode{dr:rect-obstacle-vertices}
+
+\inputleannode{dr:ellipse-obstacle-vertices}
+
+\inputleannode{dr:obstacle}
+
+\subsection{Intersection Tests}
+
+\inputleannode{dr:segment-intersects-rect}
+
+The Liang-Barsky algorithm clips a line segment to a rectangle by computing
+the parametric $t$ values where the line enters and exits each boundary.
+The segment intersects the rectangle if and only if the entry range
+$[t_0, t_1]$ is non-empty.
+
+\inputleannode{dr:segment-intersects-ellipse}
+
+\inputleannode{dr:segment-intersects-obstacles}
+
+\subsection{Shortest Path}
+
+\inputleannode{dr:dijkstra}
+
+\inputleannode{dr:point}
+
+\inputleannode{dr:point-dist}
+
+\inputleannode{dr:get-path-points}
+
+The shortest path through the visibility graph is found via Dijkstra's
+algorithm with Euclidean distance as the edge weight. The $O(V^2)$
+implementation (without a priority queue) is sufficient because visibility
+graphs for individual edges are small.
+
+\subsection{Curve Fitting}
+
+The polyline path from Dijkstra is smoothed into B\'{e}zier curves for
+aesthetic rendering:
+
+\inputleannode{dr:polyline-to-bezier}
+
+\inputleannode{dr:catmull-rom-to-bezier}
+
+\inputleannode{dr:bezier-to-svg-path}
+
+\inputleannode{dr:smooth-corners}
+
+\inputleannode{dr:smooth-corners-to-svg}
+
+Catmull-Rom interpolation with phantom endpoints produces $C^1$-continuous
+curves through the waypoints. The resulting control points are converted to
+SVG cubic B\'{e}zier path data (\texttt{M ... C ...}).
+
+\subsection{Boundary Clipping}
+
+Edge endpoints are clipped to node boundaries based on node shape:
+
+\inputleannode{dr:clip-to-node-boundary}
+
+\inputleannode{dr:intersect-line-ellipse}
+
+\inputleannode{dr:intersect-line-rect}
+
+For ellipses, the intersection is found by solving the parametric equation
+$(t \cdot dx / r_x)^2 + (t \cdot dy / r_y)^2 = 1$. For rectangles, the
+intersection with each edge is computed and the closest (smallest positive
+$t$) is chosen.
+
+\section{Layout State and Monad}
+
+\inputleannode{dr:layout-state}
+
+\inputleannode{dr:layout-monad}
+
+\section{Top-Level Layout Entry Points}
+
+\inputleannode{dr:layout}
+
+The \texttt{layout} function orchestrates the full Sugiyama pipeline: acyclic
+transformation, layer assignment, crossing reduction, coordinate assignment,
+edge routing, and coordinate normalization. The normalization step shifts all
+coordinates so the bounding box starts at $(0, 0)$, which is required for
+\texttt{fitToWindow()} in the JavaScript frontend to correctly calculate
+content bounds via \texttt{getBBox()}.
+
+\section{Subgraph Extraction}
+
+For interactive modals that display a node's local neighborhood, Dress
+pre-renders subgraphs at build time:
+
+\inputleannode{dr:layout-graph-extract-subgraph}
+
+\inputleannode{dr:extract-subgraph}
+
+\inputleannode{dr:subgraph-direction}
+
+\inputleannode{dr:subgraph-direction-from-string}
+
+\inputleannode{dr:subgraph-direction-to-string}
+
+\inputleannode{dr:subgraph-direction-all}
+
+\inputleannode{dr:subgraph-depths}
+
+\inputleannode{dr:max-subgraph-depth}
+
+\inputleannode{dr:extract-subgraphs-incremental}
+
+Subgraphs are extracted by BFS from a center node, following edges in the
+specified direction (ancestors, descendants, or both) up to a configurable
+depth. The extracted subgraph inherits positioned nodes and edges from the
+full layout, re-centered with normalized coordinates.
+
+\inputleannode{dr:compute-all-max-depths}
+
+\inputleannode{dr:compute-max-depth}
+
+\inputleannode{dr:node-depth-info}
+
+\inputleannode{dr:depth-metadata-to-json}
+
+\section{Performance Optimizations}
+
+For graphs exceeding 100 nodes, several optimizations are triggered to keep
+layout time practical:
+
+\begin{center}
+\begin{tabular}{lll}
+\textbf{Optimization} & \textbf{Normal} & \textbf{$>$100 nodes} \\
+\hline
+Barycenter iterations & Configurable & Max 2 \\
+Transpose heuristic & Yes & Skipped \\
+Visibility graph routing & Yes & Skipped \\
+Transitive reduction & DFS-based & Skipped ($>$500) \\
+\end{tabular}
+\end{center}
+
+The 100-node threshold balances layout quality against computation time.
+PNT (591 annotations) renders in approximately 15 seconds with these
+optimizations; without them, layout would take minutes.
+
+
+% =============================================================================
+\chapter{SVG Generation}
+\label{ch:svg}
+% =============================================================================
+
+Dress includes a composable SVG generation library used for dependency graph
+rendering and potentially for any SVG output a Dress-powered project might
+need. The library is organized into focused submodules.
+
+\section{Core Types}
+
+\inputleannode{dr:svg-element}
+
+\inputleannode{dr:svg-element-render}
+
+\inputleannode{dr:svg-element-el}
+
+\inputleannode{dr:svg-element-txt}
+
+\inputleannode{dr:svg-document}
+
+The \texttt{SvgElement} type is an inductive with three constructors:
+\texttt{node} (a tagged element with attributes and children), \texttt{text}
+(escaped text content), and \texttt{raw} (pre-escaped content). The
+\texttt{render} function produces indented SVG strings.
+
+\inputleannode{dr:svg-escape-xml}
+
+\section{Shapes}
+
+\inputleannode{dr:svg-rect}
+
+\inputleannode{dr:svg-circle}
+
+\inputleannode{dr:svg-ellipse}
+
+\inputleannode{dr:svg-line}
+
+\inputleannode{dr:svg-polyline}
+
+\inputleannode{dr:svg-polygon}
+
+\inputleannode{dr:svg-path}
+
+\inputleannode{dr:svg-dashed-line}
+
+\inputleannode{dr:svg-curve-path}
+
+\section{Text}
+
+\inputleannode{dr:svg-text}
+
+\inputleannode{dr:svg-centered-text}
+
+\inputleannode{dr:svg-label}
+
+\section{Style}
+
+\inputleannode{dr:svg-style}
+
+\inputleannode{dr:svg-style-to-attrs}
+
+\section{Transform}
+
+\inputleannode{dr:svg-translate}
+
+\inputleannode{dr:svg-scale}
+
+\inputleannode{dr:svg-rotate}
+
+\inputleannode{dr:svg-group}
+
+\inputleannode{dr:svg-with-class}
+
+\section{Coordinate System}
+
+The coordinate system module maps mathematical coordinates to SVG pixel
+coordinates, providing axes, grids, tick marks, and function plotting:
+
+\inputleannode{dr:coord-system}
+
+\inputleannode{dr:coord-to-svg-x}
+
+\inputleannode{dr:coord-to-svg-y}
+
+\inputleannode{dr:coord-to-svg}
+
+\inputleannode{dr:coord-plot-width}
+
+\inputleannode{dr:coord-plot-height}
+
+\inputleannode{dr:coord-x-axis}
+
+\inputleannode{dr:coord-y-axis}
+
+\inputleannode{dr:coord-axes}
+
+\inputleannode{dr:coord-x-ticks}
+
+\inputleannode{dr:coord-y-ticks}
+
+\inputleannode{dr:coord-grid}
+
+\inputleannode{dr:coord-plot-function}
+
+The $y$-axis is flipped: mathematical $y$ increases upward while SVG $y$
+increases downward. The \texttt{toSvgY} function handles this inversion:
+$y_{\text{svg}} = \text{padding} + (y_{\max} - y) / (y_{\max} - y_{\min})
+\cdot h_{\text{plot}}$.
+
+
+% =============================================================================
+\chapter{Dependency Graph Rendering}
+\label{ch:graph-svg}
+% =============================================================================
+
+The \texttt{Dress.Graph.Svg} module translates the positioned
+\texttt{LayoutGraph} into SVG output. This is where the six-status color
+model is defined---these hex values are the canonical source of truth for
+status colors across the entire SBS toolchain.
+
+\section{Configuration}
+
+\inputleannode{dr:svg-config}
+
+The \texttt{SvgConfig} structure defines the visual parameters: status colors,
+stroke widths, font settings, and border radii. Axiom nodes use a distinct
+purple color that overrides the status-based coloring.
+
+\section{Status Colors}
+
+\inputleannode{dr:svg-get-status-color}
+
+\inputleannode{dr:svg-get-text-color}
+
+\inputleannode{dr:svg-status-css-class}
+
+The color assignments encode formalization progress at a glance:
+vivid orange for unstarted, deep teal for ready, vivid red for sorry,
+medium green for proven, deep forest green for fully proven, and
+vivid blue for mathlib-ready. Text color is white for dark backgrounds
+(sorry, fully proven, ready) and dark gray otherwise.
+
+\section{Node Rendering}
+
+\inputleannode{dr:svg-render-node}
+
+Each node is rendered as a clickable SVG group containing the shape
+element (ellipse, rectangle, or diamond) and a centered label.
+Manually-tagged nodes receive a dotted border
+(\texttt{stroke-dasharray="2,2"}) to visually distinguish them from
+automatically-derived statuses.
+
+\section{Edge Rendering}
+
+\inputleannode{dr:svg-render-edge}
+
+\inputleannode{dr:svg-reverse-bezier}
+
+Edges are rendered as B\'{e}zier paths with arrowheads pointing in the
+direction of dependency. Reversed back-edges (from the acyclic transformation)
+have their control points reversed so the visual direction matches the
+original dependency direction while the arrow correctly indicates the
+logical flow.
+
+\section{Complete Graph Rendering}
+
+\inputleannode{dr:svg-render}
+
+\inputleannode{dr:svg-render-defs}
+
+\inputleannode{dr:svg-render-legend}
+
+\inputleannode{dr:svg-render-to-file}
+
+The complete SVG document includes arrowhead definitions in a
+\texttt{<defs>} section, a status legend for color interpretation,
+all nodes and edges, and metadata attributes for JavaScript interactivity.
+
+
+% =============================================================================
+\chapter{Side-by-Side Rendering}
+\label{ch:sbs}
+% =============================================================================
+
+The side-by-side display is the signature visual element of the SBS
+toolchain: each annotated declaration is rendered as a two-column grid
+with the LaTeX mathematical statement on the left and the Lean formalization
+on the right. Dress provides a unified rendering API used by both blueprint
+pages and paper generation.
+
+\section{SbsData}
+
+\inputleannode{dr:sbs-data}
+
+\inputleannode{dr:sbs-data-mk-prime}
+
+The \texttt{SbsData} structure carries all information needed to render a
+single side-by-side display: the HTML element ID, display label, environment
+type, node status, pre-rendered LaTeX statement and proof, syntax-highlighted
+Lean signature and proof body, hover tooltip data, and optional above/below
+narrative content.
+
+\section{Rendering Variants}
+
+\inputleannode{dr:sbs-variant}
+
+Two rendering variants exist:
+\begin{itemize}
+\item \textbf{Blueprint variant}: Uses status dots as colored circles with
+  a click handler that navigates to the dependency graph. Standard CSS
+  class names (\texttt{theorem\_thmwrapper}, etc.).
+\item \textbf{Paper variant}: Uses verification badges (``Verified'',
+  ``In Progress'', ``Not Started'') with icon indicators. Includes a link
+  back to the blueprint page. Paper-specific CSS class names
+  (\texttt{paper-theorem}, etc.).
+\end{itemize}
+
+\section{Status Display Helpers}
+
+\inputleannode{dr:status-to-color}
+
+\inputleannode{dr:status-to-display-string}
+
+\inputleannode{dr:status-to-css-class}
+
+\inputleannode{dr:status-to-badge-class}
+
+\inputleannode{dr:status-to-badge-label}
+
+\inputleannode{dr:status-to-badge-icon}
+
+\inputleannode{dr:escape-html}
+
+\inputleannode{dr:capitalize}
+
+\section{Verification Badges}
+
+\inputleannode{dr:render-verification-badge}
+
+Verification badges provide a user-friendly summary of formalization status
+for the paper variant, collapsing the six-status model into three categories:
+``Verified'' (proven, fully proven, mathlib ready), ``In Progress'' (sorry,
+ready), and ``Not Started'' (not ready).
+
+\section{Grid Cells}
+
+The side-by-side display is a CSS grid with up to five rows:
+
+\begin{enumerate}
+\item \textbf{Above} (optional): Narrative LaTeX content above the theorem.
+\item \textbf{Heading}: Environment type, label, status indicator.
+\item \textbf{Statement + Signature}: LaTeX statement (left) and Lean
+  signature (right).
+\item \textbf{Proof}: LaTeX proof with toggle (left) and Lean proof body (right).
+\item \textbf{Below} (optional): Narrative LaTeX content below the theorem.
+\end{enumerate}
+
+\inputleannode{dr:render-heading-cell}
+
+\inputleannode{dr:render-heading-cell-blueprint}
+
+\inputleannode{dr:render-heading-cell-paper}
+
+\inputleannode{dr:render-statement-cell}
+
+\inputleannode{dr:render-signature-cell}
+
+\inputleannode{dr:render-proof-toggle}
+
+\inputleannode{dr:render-proof-lean-cell}
+
+\inputleannode{dr:render-proof-latex-cell}
+
+\section{Main Entry Point}
+
+\inputleannode{dr:render-side-by-side}
+
+The \texttt{renderSideBySide} function assembles all grid cells into a
+single \texttt{<div>} with the appropriate container class. The container
+class varies by variant but both include \texttt{sbs-container} for the
+shared CSS grid layout.
+
+
+% =============================================================================
+\chapter{Output and Serialization}
+\label{ch:output}
+% =============================================================================
+
+The output module provides the final stage of artifact generation:
+assembling per-declaration LaTeX artifacts into module-level and
+library-level output files, and writing JSON metadata for downstream
+consumers.
+
+\section{LaTeX Output Pipeline}
+
+\inputleannode{dr:output-latex-results}
+
+\inputleannode{dr:module-to-latex-output}
+
+\inputleannode{dr:main-module-to-latex-output}
+
+The LaTeX output for each module consists of a header file containing
+\texttt{\textbackslash input\{\}} directives for each declaration's artifact,
+plus the individual artifact files themselves. The header file uses relative
+paths from \texttt{blueprint/src/} to the dressed artifacts directory.
+
+\inputleannode{dr:latex-output-of-import-module}
+
+\inputleannode{dr:output-library-latex}
+
+Library-level output aggregates all modules into a single index file that
+\texttt{\textbackslash input\{\}}s each module's header. This is the file
+referenced by the blueprint's main \texttt{\textbackslash input\{\}} at
+the top of \texttt{blueprint.tex}.
+
+\section{JSON Output Pipeline}
+
+\inputleannode{dr:output-json-results}
+
+\inputleannode{dr:module-to-json}
+
+\inputleannode{dr:main-module-to-json}
+
+\inputleannode{dr:json-of-import-module}
+
+\inputleannode{dr:output-library-json}
+
+\inputleannode{dr:blueprint-content-to-json}
+
+\inputleannode{dr:blueprint-content-to-latex}
+
+\inputleannode{dr:node-with-pos-to-json}
+
+\inputleannode{dr:module-to-rel-path}
+
+\inputleannode{dr:library-to-rel-path}
+
+\section{Graph Serialization}
+
+The graph serialization module converts the complete laid-out dependency
+graph into JSON format for the manifest consumed by Runway:
+
+\inputleannode{dr:json-graph}
+
+\inputleannode{dr:json-node}
+
+\inputleannode{dr:json-edge}
+
+\inputleannode{dr:json-layout-graph}
+
+\inputleannode{dr:json-layout-node}
+
+\inputleannode{dr:json-layout-edge}
+
+\inputleannode{dr:json-check-results-to}
+
+\inputleannode{dr:json-check-results-from}
+
+\section{Blueprint Configuration}
+
+\inputleannode{dr:blueprint-config}
+
+\inputleannode{dr:parse-blueprint-config}
+
+\section{Diagnostic Commands}
+
+Dress provides diagnostic commands for inspecting blueprint output during
+development:
+
+\inputleannode{dr:elab-show-blueprint}
+
+\inputleannode{dr:elab-show-blueprint-json}
+
+The \texttt{\#show\_blueprint} command displays the LaTeX output for the
+current module or a specific declaration. \texttt{\#show\_blueprint\_json}
+provides the same in JSON format. Both support lookup by Lean name or
+LaTeX label.
+
+
+% =============================================================================
+\chapter{Design Rationale}
+\label{ch:rationale}
+% =============================================================================
+
+This chapter explains the key design decisions in Dress and why alternative
+approaches were rejected.
+
+\section{Immediate Capture vs.\ Deferred Processing}
+
+The most consequential design decision in Dress is performing SubVerso
+highlighting \emph{during} elaboration rather than deferring it to a
+post-compilation step. This decision was forced by the Lean~4 elaboration
+model: info trees exist only during command elaboration and are discarded
+immediately afterward. Any system that needs semantic information about
+declarations---identifier kinds, type signatures, tactic states---must
+capture it while the info trees are live.
+
+The cost is significant: SubVerso highlighting accounts for 93--99\% of build
+time. A declaration that elaborates in 10ms may require 500ms or more for
+highlighting. But the alternative---re-elaborating source code in a separate
+pass---would be even more expensive and would not produce identical info
+trees (imports, options, and namespace state can differ).
+
+The module-level caching strategy (suffix index, highlight cache) mitigates
+this cost by amortizing work across declarations within a module.
+
+\section{Content-Based Caching}
+
+The per-declaration cache (Chapter~\ref{ch:core}) uses content hashing rather
+than timestamp-based invalidation. This ensures that renaming a file or
+touching it without changing content does not trigger expensive regeneration.
+The hash incorporates the declaration name, \texttt{@[blueprint]} attribute
+fields, source location, and highlighting data---any change to any of these
+components invalidates the cache entry.
+
+\section{Two-Pass Graph Construction}
+
+Graph construction uses a two-pass builder (Chapter~\ref{ch:build}) rather
+than single-pass construction. The reason is edge resolution: an edge's
+target label may not yet be registered when the source node is processed,
+since modules are processed in compilation order, not dependency order.
+Pass~1 registers all labels; Pass~2 resolves edges against the complete
+label set. Edges with unresolved endpoints are silently dropped rather than
+raising errors, since they may reference nodes in modules that were not
+compiled in the current build.
+
+\section{Composable SVG Library}
+
+Dress includes a standalone SVG generation library (Chapter~\ref{ch:svg})
+rather than using string templates. This was motivated by several factors:
+
+\begin{itemize}
+\item \textbf{Correctness}: The \texttt{SvgElement} inductive type ensures
+  well-formedness by construction. Attributes are always properly escaped.
+\item \textbf{Composability}: SVG elements can be grouped, transformed, and
+  styled using Lean functions, enabling programmatic construction of complex
+  graphics.
+\item \textbf{Reusability}: The coordinate system module supports arbitrary
+  mathematical visualizations beyond dependency graphs.
+\end{itemize}
+
+\section{Status Color Model}
+
+The six-status color model (Chapter~\ref{ch:graph-svg}) was designed to
+encode formalization progress at a glance while remaining accessible:
+
+\begin{itemize}
+\item The progression from orange (not started) through green shades (proven,
+  fully proven) follows a natural ``traffic light'' metaphor.
+\item The \texttt{fullyProven} vs.\ \texttt{proven} distinction answers a
+  critical question: ``If this theorem is proven, are all its dependencies
+  also proven?'' This distinction, inspired by the Tao incident where a
+  proof relied on an unproven lemma, is computed automatically via the
+  $O(V+E)$ memoized algorithm in \texttt{computeFullyProven}.
+\item Lean source code is the canonical location for color definitions.
+  CSS variables must match the hex values in \texttt{Dress.Graph.Svg} exactly.
+  This prevents the common bug of colors diverging between the graph
+  rendering and the HTML theme.
+\end{itemize}
+
+\section{Performance Thresholds}
+
+The Sugiyama layout algorithm has quadratic or worse complexity in several
+phases (crossing reduction, visibility graph construction). For large projects
+like PNT (591 annotations), these phases would take minutes without
+optimization. The 100-node threshold for triggering simplified algorithms was
+empirically determined:
+
+\begin{itemize}
+\item SBS-Test (49 nodes): Full algorithm, sub-second layout.
+\item GCR (128 nodes): Simplified crossing reduction, approximately 2 seconds.
+\item PNT (591 nodes): All optimizations, approximately 15 seconds.
+\end{itemize}
+
+The optimizations sacrifice some layout quality (more edge crossings, less
+optimal node positioning) for dramatically reduced computation time. For most
+formalization projects, the simplified layout is visually adequate.
+
+\section{Side-by-Side Grid Architecture}
+
+The side-by-side display (Chapter~\ref{ch:sbs}) uses a CSS grid rather than
+HTML tables or flexbox. The grid approach was chosen because:
+
+\begin{itemize}
+\item The two-column layout with optional above/below rows maps naturally to
+  a grid with named areas.
+\item Row heights adjust independently: the proof toggle can expand without
+  affecting the heading row.
+\item The same grid structure supports both blueprint and paper variants with
+  only CSS class changes, not structural HTML changes.
+\end{itemize}
+
+The unified \texttt{renderSideBySide} API with the \texttt{SbsVariant}
+parameter ensures that both variants stay synchronized as features are added.
+
+\end{document}
