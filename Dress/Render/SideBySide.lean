@@ -206,7 +206,8 @@ def renderHeadingCellPaper (data : SbsData) (blueprintUrl : Option String)
   let badge := renderVerificationBadge data.status
   let statusColor := statusToColor data.status
   let statusTitle := statusToDisplayString data.status
-  let statusDot := s!"<span class=\"status-dot paper-status-dot\" style=\"background:{statusColor}\" title=\"Status: {statusTitle}\"></span>"
+  let statusCss := statusToCssClass data.status
+  let statusDot := s!"<button class=\"status-dot-btn paper-status-dot\" data-node-id=\"{escapeHtml data.id}\" data-status=\"{statusCss}\" style=\"background:{statusColor}\" title=\"{statusTitle}\" aria-label=\"Show dependency graph for {escapeHtml (data.displayNumber.getD data.label)}\"></button>"
   s!"<div class=\"sbs-heading\"><div class=\"paper-theorem-header\">
   <span class=\"paper-theorem-type\">{capitalize envType} {displayLabel}</span>
   {statusDot}{badge}{blueprintLink}{paperLink}
