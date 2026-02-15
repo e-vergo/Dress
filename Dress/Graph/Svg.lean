@@ -222,8 +222,8 @@ def renderDefs (config : SvgConfig) (includeBaseNodeFilter : Bool := false) : St
   s!"    <polygon class=\"graph-arrowhead\" points=\"0 0, 10 3.5, 0 7\" fill=\"{config.edgeColor}\"/>\n" ++
   "  </marker>\n" ++
   (if includeBaseNodeFilter then
-    "  <filter id=\"base-node-glow\" x=\"-20%\" y=\"-20%\" width=\"140%\" height=\"140%\">\n" ++
-    "    <feDropShadow dx=\"0\" dy=\"0\" stdDeviation=\"4\" flood-color=\"#2563EB\" flood-opacity=\"0.6\"/>\n" ++
+    "  <filter id=\"base-node-glow\" x=\"-30%\" y=\"-30%\" width=\"160%\" height=\"160%\">\n" ++
+    "    <feDropShadow dx=\"0\" dy=\"0\" stdDeviation=\"6\" flood-color=\"#2563EB\" flood-opacity=\"0.8\"/>\n" ++
     "  </filter>\n"
    else "") ++
   "</defs>\n"
