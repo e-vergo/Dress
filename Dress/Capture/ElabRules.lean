@@ -216,6 +216,47 @@ elab_rules : command
     else
       throwUnsupportedSyntax
 
+/-! ## Retroactive Annotation Support
+
+The `#dressNodes` command writes dressed artifacts for all blueprint nodes in the
+current environment that don't yet have per-declaration artifacts. This supports
+retroactive `attribute [blueprint ...] Name` annotations, where the declaration
+source code is already compiled and SubVerso highlighting is not available.
+
+Usage: Place `#dressNodes` at the end of files containing retroactive blueprint
+annotations. -/
+
+/-- Scans the current environment for all blueprint nodes and writes dressed
+    artifacts for any that don't already have per-declaration artifact directories.
+    This is the primary mechanism for generating dressed artifacts from retroactive
+    `attribute [blueprint ...]` annotations.
+
+    Since the declaration source is already compiled, artifacts are written with
+    `highlighting := none`, producing valid LaTeX and JSON without syntax-highlighted
+    code display. -/
+elab "#dressNodes" : command => do
+  let env ← getEnv
+  let blueprintState := (Architect.blueprintExt : SimplePersistentEnvExtension (Name × Architect.Node) (NameMap Architect.Node)).getState env
+  let buildDir : System.FilePath := ".lake" / "build"
+  let moduleName := env.header.mainModule
+  let mut count := 0
+  for (name, node) in blueprintState do
+    -- Skip imported declarations (only process nodes from the current module's env)
+    let label := node.latexLabel
+    let declDir := Dress.Paths.getDeclarationDir buildDir moduleName label
+    -- Skip if artifacts already exist
+    if ← declDir.pathExists then continue
+    try
+      let highlighting : Option Highlighted := none
+      let file := (← read).fileName
+      let location ← liftTermElabM do
+        Lean.findDeclarationRanges? name
+      Generate.writeDeclarationArtifactsFromNode name node highlighting (some file) (location.map (·.range))
+      count := count + 1
+    catch _ => pure ()
+  if count > 0 then
+    logInfo m!"Dressed {count} retroactive blueprint nodes"
+
 end Dress.Capture
 
 -- Re-export at Dress namespace for backward compatibility
