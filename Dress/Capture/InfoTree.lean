@@ -22,6 +22,10 @@ while info trees are still available.
 open Lean Elab Command Term Meta
 open SubVerso.Highlighting
 
+/-- Forward-port of lean4#12469: `Thunk α` is `Inhabited` when `α` is.
+    Required by newer batteries (≥ v4.28.0) which wraps `NameMapExtension` state in a `Thunk`. -/
+instance [Inhabited α] : Inhabited (Thunk α) := ⟨.pure default⟩
+
 namespace Dress.Capture
 
 /-! ## Environment Extension for Captured Artifacts -/
