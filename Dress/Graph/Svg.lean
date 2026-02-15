@@ -102,7 +102,7 @@ def renderNode (config : SvgConfig) (node : Layout.LayoutNode)
   -- Base node highlighting: accent border + glow filter for the focal node
   let isBase := baseNodeId == some node.node.id
   let strokeCol := if isBase then "#2563EB" else config.strokeColor
-  let strokeW := if isBase then 3.0 else config.strokeWidth
+  let strokeW := if isBase then 4.0 else config.strokeWidth
   let filterAttr := if isBase then " filter=\"url(#base-node-glow)\"" else ""
 
   let shapeElement := match node.node.shape with
@@ -223,7 +223,7 @@ def renderDefs (config : SvgConfig) (includeBaseNodeFilter : Bool := false) : St
   "  </marker>\n" ++
   (if includeBaseNodeFilter then
     "  <filter id=\"base-node-glow\" x=\"-20%\" y=\"-20%\" width=\"140%\" height=\"140%\">\n" ++
-    "    <feDropShadow dx=\"0\" dy=\"0\" stdDeviation=\"3\" flood-color=\"#2563EB\" flood-opacity=\"0.4\"/>\n" ++
+    "    <feDropShadow dx=\"0\" dy=\"0\" stdDeviation=\"4\" flood-color=\"#2563EB\" flood-opacity=\"0.6\"/>\n" ++
     "  </filter>\n"
    else "") ++
   "</defs>\n"
