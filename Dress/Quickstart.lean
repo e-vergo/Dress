@@ -98,7 +98,7 @@ def mkRunwayJson (projectName title githubUrl baseUrl : String) : String :=
   "  \"baseUrl\": \"" ++ baseUrl ++ "\",\n" ++
   "  \"docgen4Url\": null,\n" ++
   "  \"runwayDir\": \"runway\",\n" ++
-  "  \"assetsDir\": null\n" ++
+  "  \"assetsDir\": \"../dress-blueprint-action/assets\"\n" ++
   "}\n"
 
 /-- Generate CI workflow YAML content. -/
