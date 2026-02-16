@@ -42,7 +42,7 @@ def _root_.Dress.NodeWithPos.toLatex (node : Dress.NodeWithPos) : m Latex := do
   addLatex := addLatex ++ "\\label{" ++ node.latexLabel ++ "}\n"
 
   addLatex := addLatex ++ "\\lean{" ++ ",".intercalate (allLeanNames.map toString).toList ++ "}\n"
-  if allNodes.any (·.notReady) then
+  if allNodes.any (·.status == .notReady) then
     addLatex := addLatex ++ "\\notready\n"
   if let some d := allNodes.findSome? (·.discussion) then
     addLatex := addLatex ++ "\\discussion{" ++ toString d ++ "}\n"
@@ -228,7 +228,7 @@ def nodeWithPosToJson (node : NodeWithPos) : Json :=
     "latexLabel": $(node.latexLabel),
     "statement": $(node.statement),
     "proof": $(node.proof),
-    "notReady": $(node.notReady),
+    "notReady": $(node.status == .notReady),
     "discussion": $(node.discussion),
     "title": $(node.title),
     "hasLean": $(node.hasLean),

@@ -59,26 +59,31 @@ def registerLabel (label nodeId : String) : BuilderM Unit := do
 /-- Determine node status from Architect.Node.
     This computes the final visualization status based on:
     1. Manual status from @[blueprint] attribute
-    2. Derived statuses (sorry, proven) based on hasLean
+    2. Auto-detected axiom status from envType
+    3. Derived statuses (sorry, proven) based on hasLean
 
     Priority order (highest to lowest):
     1. If manual `mathlibReady` flag → mathlibReady
-    2. If manual `ready` flag → ready
+    2. If manual `wip` flag → wip
     3. If explicit `notReady` flag → notReady (overrides auto-derive)
-    4. If hasLean and no sorryAx → proven (fullyProven computed post-graph)
-    5. If hasLean but has sorryAx → sorry
-    6. Default: notReady (no Lean code)
+    4. If envType is "axiom" → axiom (auto-detected, no proof expected)
+    5. If hasLean and no sorryAx → proven (fullyProven computed post-graph)
+    6. If hasLean but has sorryAx → sorry
+    7. Default: notReady (no Lean code)
 
     Note: fullyProven is computed by `computeFullyProven` after graph construction
-    by checking that all dependencies are proven/fullyProven.
+    by checking that all dependencies are proven/fullyProven/axiom.
 -/
-def getStatus (node : Architect.Node) (hasLean : Bool) (hasSorry : Bool := false) : NodeStatus :=
+def getStatus (node : Architect.Node) (hasLean : Bool) (hasSorry : Bool := false)
+    (envType : String := "") : NodeStatus :=
   match node.status with
   | .mathlibReady => .mathlibReady  -- Highest priority manual flag
-  | .ready => .ready                 -- Manual ready flag
+  | .wip => .wip                     -- Manual work-in-progress flag
   | _ =>
     -- If the user explicitly set notReady := true, respect it even when Lean code exists
     if node.statusExplicit && node.status == .notReady then .notReady
+    -- Auto-detect axiom from environment type
+    else if envType.toLower == "axiom" then .axiom
     else
       -- Auto-derive from Lean presence
       if hasLean then
@@ -122,7 +127,7 @@ def registerNode (dressNode : Dress.NodeWithPos) (hasSorry : Bool) : BuilderM Un
     id := label
     label := displayLabel
     envType := envType
-    status := getStatus node dressNode.hasLean hasSorry
+    status := getStatus node dressNode.hasLean hasSorry envType
     shape := getShape envType
     url := "#" ++ label
     leanDecls := #[node.name]
@@ -179,9 +184,10 @@ def computeFullyProven (g : Graph) : Graph := Id.run do
   -- Memoization: nodeId -> Bool (is this node + all ancestors complete?)
   let mut memo : Std.HashMap String Bool := {}
 
-  -- Check if status is "complete" (proven or fullyProven)
+  -- Check if status is "complete" (proven, fullyProven, or axiom)
+  -- Axioms have no proof obligation, so they don't block fullyProven promotion
   let isComplete : NodeStatus → Bool
-    | .proven | .fullyProven => true
+    | .proven | .fullyProven | .axiom => true
     | _ => false
 
   -- Recursive check with memoization using iterative worklist algorithm
@@ -392,7 +398,8 @@ def fromNodes (nodes : Array Dress.NodeWithPos) : Graph :=
 
 /-- Build graph from the environment's blueprint extension -/
 def fromEnvironment (env : Lean.Environment) : Lean.CoreM Graph := do
-  let entries := Architect.blueprintExt.getEntries env
+  let state := Architect.blueprintExt.getState env
+  let entries := state.toList
   let nodesData ← entries.toArray.mapM fun (_, node) => do
     let mut dressNode ← Dress.toDressNodeWithPos node
     -- Check if the underlying Lean constant is an axiom and override envType

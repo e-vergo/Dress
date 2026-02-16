@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 -/
 import Dress
 import Dress.AutoTag
+import Dress.Quickstart
 import Lean
 import Cli
 
@@ -364,6 +365,15 @@ def runGraphCmd (p : Parsed) : IO UInt32 := do
 
   return 0
 
+/-- Run the quickstart command: scaffold an SBS blueprint project from an existing Lean project. -/
+def runQuickstartCmd (p : Parsed) : IO UInt32 := do
+  let githubUrl := p.flag? "github-url" |>.map (·.as! String)
+  let title := p.flag? "title" |>.map (·.as! String)
+  let baseUrl := p.flag? "base-url" |>.map (·.as! String)
+  let force := p.hasFlag "force"
+  let dryRun := p.hasFlag "dry-run"
+  Dress.Quickstart.runQuickstart "." githubUrl title baseUrl force dryRun
+
 def singleCmd := `[Cli|
   single VIA runSingleCmd;
   "Only extract the blueprint for the module it was given, might contain broken \\input{}s unless all blueprint files are extracted."
@@ -431,6 +441,18 @@ def autoTagCmd := `[Cli|
     ...modules : String; "The project modules to auto-tag (e.g. OSforGFF)."
 ]
 
+def quickstartCmd := `[Cli|
+  quickstart VIA runQuickstartCmd;
+  "Set up an existing Lean project as an SBS blueprint project. Creates runway.json, CI workflow, LaTeX stub, and adds `import Dress` to source files."
+
+  FLAGS:
+    "github-url" : String; "GitHub repository URL (for runway.json and CI workflow)."
+    "title" : String; "Project title (default: project name from lakefile.toml)."
+    "base-url" : String; "GitHub Pages base URL (default: /<repo-name>/)."
+    n, "dry-run"; "Show what would be changed without modifying files."
+    f, force; "Overwrite existing files."
+]
+
 def blueprintCmd : Cmd := `[Cli|
   "Dress" NOOP;
   "A dressing generator for Lean 4 blueprint projects."
@@ -439,7 +461,8 @@ def blueprintCmd : Cmd := `[Cli|
     singleCmd;
     indexCmd;
     graphCmd;
-    autoTagCmd
+    autoTagCmd;
+    quickstartCmd
 ]
 
 def main (args : List String) : IO UInt32 :=

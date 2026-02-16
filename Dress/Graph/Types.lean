@@ -71,10 +71,11 @@ structure Node where
 /-- Counts of nodes by status -/
 structure StatusCounts where
   notReady : Nat := 0
-  ready : Nat := 0
+  wip : Nat := 0
   hasSorry : Nat := 0
   proven : Nat := 0
   fullyProven : Nat := 0
+  axiom_ : Nat := 0
   mathlibReady : Nat := 0
   numAxioms : Nat := 0
   total : Nat := 0
@@ -155,7 +156,8 @@ def Graph.computeStatusCounts (g : Graph) : StatusCounts := Id.run do
       counts := { counts with numAxioms := counts.numAxioms + 1 }
     match node.status with
     | .notReady => counts := { counts with notReady := counts.notReady + 1 }
-    | .ready => counts := { counts with ready := counts.ready + 1 }
+    | .wip => counts := { counts with wip := counts.wip + 1 }
+    | .axiom => counts := { counts with axiom_ := counts.axiom_ + 1 }
     | .sorry => counts := { counts with hasSorry := counts.hasSorry + 1 }
     | .proven => counts := { counts with proven := counts.proven + 1 }
     | .fullyProven => counts := { counts with fullyProven := counts.fullyProven + 1 }

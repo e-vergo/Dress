@@ -15,7 +15,7 @@ Artifact generation for Lean 4 mathematical blueprints. Transforms `@[blueprint]
 - [Two-Phase Build Architecture](#two-phase-build-architecture)
 - [Artifact Format](#artifact-format)
 - [Manifest Schema](#manifest-schema)
-- [6-Status Color Model](#6-status-color-model)
+- [7-Status Color Model](#7-status-color-model)
 - [Graph Layout Algorithm](#graph-layout-algorithm)
 - [Validation Checks](#validation-checks)
 - [Rainbow Bracket Highlighting](#rainbow-bracket-highlighting)
@@ -106,7 +106,7 @@ SubVerso -> LeanArchitect -> Dress -> Runway
 | Component | Location | Role |
 |-----------|----------|------|
 | [SubVerso](../../forks/subverso/) | `forks/subverso/` | Extracts syntax highlighting with O(1) indexed lookups via InfoTable |
-| [LeanArchitect](../../forks/LeanArchitect/) | `forks/LeanArchitect/` | Defines `@[blueprint]` attribute with 8 metadata and 3 manual status options |
+| [LeanArchitect](../../forks/LeanArchitect/) | `forks/LeanArchitect/` | Defines `@[blueprint]` attribute with 8 metadata and 2 manual status options |
 | **Dress** | `toolchain/Dress/` | Generates artifacts, computes statistics, validates graphs, performs Sugiyama layout |
 | [Runway](../Runway/) | `toolchain/Runway/` | Consumes Dress output to produce the final website, dashboard, and paper/PDF |
 | [Verso](../../forks/verso/) | `forks/verso/` | Document framework with SBSBlueprint and VersoPaper genres |
@@ -197,12 +197,13 @@ The `manifest.json` file contains precomputed data consumed by Runway:
 {
   "stats": {
     "notReady": 2,
-    "ready": 3,
+    "wip": 3,
     "hasSorry": 2,
     "proven": 5,
     "fullyProven": 8,
+    "axiom": 1,
     "mathlibReady": 1,
-    "total": 21
+    "total": 22
   },
   "keyDeclarations": ["thm:main", "thm:secondary"],
   "messages": [
@@ -227,27 +228,31 @@ The `manifest.json` file contains precomputed data consumed by Runway:
 
 **Soundness guarantee:** Statistics are computed upstream in Dress. Runway loads `manifest.json` without recomputation, ensuring displayed statistics match the actual graph state.
 
-## 6-Status Color Model
+## 7-Status Color Model
 
 Node status types are defined in LeanArchitect and re-exported by Dress. The canonical hex values are defined in `Graph/Svg.lean`:
 
 | Status | Color | Hex | Source |
 |--------|-------|-----|--------|
-| `notReady` | Sandy Brown | #F4A460 | Default or manual `(notReady := true)` |
-| `ready` | Light Sea Green | #20B2AA | Manual `(ready := true)` |
-| `sorry` | Dark Red | #8B0000 | Auto-detected: proof contains `sorryAx` |
-| `proven` | Light Green | #90EE90 | Auto-detected: complete proof |
-| `fullyProven` | Forest Green | #228B22 | Auto-computed: all ancestors proven |
-| `mathlibReady` | Light Blue | #87CEEB | Manual `(mathlibReady := true)` |
+| `notReady` | Vivid Orange | #E8820C | Default -- no Lean proof exists |
+| `wip` | Deep Teal | #0097A7 | Manual `(wip := true)` |
+| `sorry` | Vivid Red | #C62828 | Auto-detected: proof contains `sorryAx` |
+| `proven` | Medium Green | #66BB6A | Auto-detected: complete proof |
+| `fullyProven` | Deep Forest Green | #1B5E20 | Auto-computed: all ancestors proven |
+| `axiom` | Vivid Purple | #7E57C2 | Structural: Lean `axiom` declaration (intentionally unproven) |
+| `mathlibReady` | Vivid Blue | #42A5F5 | Manual `(mathlibReady := true)` |
 
 **Status priority** (manual flags take precedence):
 1. `mathlibReady` (manual)
-2. `ready` (manual)
+2. `wip` (manual)
 3. `notReady` (manual, if explicitly set)
 4. `fullyProven` (auto-computed)
-5. `sorry` (auto-detected)
-6. `proven` (auto-detected)
-7. `notReady` (default)
+5. `axiom` (auto-detected for Lean `axiom` declarations)
+6. `sorry` (auto-detected)
+7. `proven` (auto-detected)
+8. `notReady` (default)
+
+**Note:** `axiom` detection is performed during graph construction in `Graph/Build.lean`, not at SVG render time.
 
 **Color source of truth:** The hex values in `Graph/Svg.lean` are canonical. CSS variables in `common.css` must match these exactly.
 
@@ -615,7 +620,7 @@ See the [Archive & Tooling Hub](../../dev/storage/README.md) for additional CLI 
 | **LeanArchitect** | `forks/LeanArchitect/` | Blueprint attribute (upstream) |
 | **SubVerso** | `forks/subverso/` | Syntax highlighting (upstream) |
 | **Verso** | `forks/verso/` | Document framework (upstream) |
-| **SBS-Test** | `toolchain/SBS-Test/` | Minimal test project (33 nodes, all 6 statuses) |
+| **SBS-Test** | `toolchain/SBS-Test/` | Minimal test project (49 nodes, all 7 statuses) |
 | **dress-blueprint-action** | `toolchain/dress-blueprint-action/` | GitHub Actions CI solution + CSS/JS assets |
 | **GCR** | `showcase/General_Crystallographic_Restriction/` | Production example with paper (57 nodes) |
 | **PNT** | `showcase/PrimeNumberTheoremAnd/` | Large-scale integration (591 nodes) |

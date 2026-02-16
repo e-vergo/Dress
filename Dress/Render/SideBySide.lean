@@ -67,28 +67,31 @@ def escapeHtml (s : String) : String :=
 /-- Convert NodeStatus to color hex code -/
 def statusToColor : NodeStatus → String
   | .notReady => "#E8820C"       -- Vivid Orange
-  | .ready => "#0097A7"          -- Deep Teal/Cyan
+  | .wip => "#0097A7"            -- Deep Teal/Cyan
   | .sorry => "#C62828"          -- Vivid Red
   | .proven => "#66BB6A"         -- Medium Green
   | .fullyProven => "#1B5E20"    -- Deep Forest Green
+  | .axiom => "#7E57C2"          -- Vivid Purple
   | .mathlibReady => "#42A5F5"   -- Vivid Blue
 
 /-- Convert NodeStatus to display string -/
 def statusToDisplayString : NodeStatus → String
   | .notReady => "Not Ready"
-  | .ready => "Ready"
+  | .wip => "Work in Progress"
   | .sorry => "Has Sorry"
   | .proven => "Proven"
   | .fullyProven => "Fully Proven"
+  | .axiom => "Axiom"
   | .mathlibReady => "Mathlib Ready"
 
-/-- Convert NodeStatus to CSS class for status indicator (6 statuses) -/
+/-- Convert NodeStatus to CSS class for status indicator (7 statuses) -/
 def statusToCssClass : NodeStatus → String
   | .notReady => "status-not-ready"
-  | .ready => "status-ready"
+  | .wip => "status-wip"
   | .sorry => "status-sorry"
   | .proven => "status-proven"
   | .fullyProven => "status-fully-proven"
+  | .axiom => "status-axiom"
   | .mathlibReady => "status-mathlib-ready"
 
 /-- Capitalize the first letter of a string -/
@@ -99,20 +102,21 @@ def capitalize (s : String) : String :=
 
 /-- Convert NodeStatus to verification badge CSS class -/
 def statusToBadgeClass : NodeStatus → String
-  | .proven | .fullyProven | .mathlibReady => "verified"
-  | .sorry | .ready => "in-progress"
+  | .proven | .fullyProven | .mathlibReady | .axiom => "verified"
+  | .sorry | .wip => "in-progress"
   | .notReady => "not-started"
 
 /-- Convert NodeStatus to verification badge label text -/
 def statusToBadgeLabel : NodeStatus → String
   | .proven | .fullyProven | .mathlibReady => "Verified"
-  | .sorry | .ready => "In Progress"
+  | .axiom => "Axiom"
+  | .sorry | .wip => "In Progress"
   | .notReady => "Not Started"
 
 /-- Convert NodeStatus to badge icon class suffix -/
 def statusToBadgeIcon : NodeStatus → String
-  | .proven | .fullyProven | .mathlibReady => "check"
-  | .sorry | .ready => "half"
+  | .proven | .fullyProven | .mathlibReady | .axiom => "check"
+  | .sorry | .wip => "half"
   | .notReady => "circle"
 
 /-- Render a verification badge for paper mode.
@@ -177,7 +181,6 @@ def renderHeadingCellBlueprint (data : SbsData) (blueprintUrl : Option String :=
     (paperUrl : Option String := none) : String :=
   let envType := escapeHtml data.envType
   let displayLabel := escapeHtml (data.displayNumber.getD data.label)
-  let statusColor := statusToColor data.status
   let statusTitle := statusToDisplayString data.status
   let statusCss := statusToCssClass data.status
   let blueprintLink := match blueprintUrl with
@@ -189,7 +192,7 @@ def renderHeadingCellBlueprint (data : SbsData) (blueprintUrl : Option String :=
   s!"<div class=\"sbs-heading\"><div class=\"{envType}_thmheading\">
   <span class=\"{envType}_thmcaption\">{capitalize envType}</span>
   <span class=\"{envType}_thmlabel\">{displayLabel}</span>
-  <div class=\"thm_header_extras {statusCss}\"><button class=\"status-dot-btn header-status-dot\" data-node-id=\"{escapeHtml data.id}\" data-status=\"{statusCss}\" style=\"background:{statusColor}\" title=\"{statusTitle}\" aria-label=\"Show dependency graph for {escapeHtml (data.displayNumber.getD data.label)}\"></button>{blueprintLink}{paperLink}</div>
+  <div class=\"thm_header_extras {statusCss}\"><button class=\"status-dot-btn header-status-dot {statusCss}\" data-node-id=\"{escapeHtml data.id}\" data-status=\"{statusCss}\" title=\"{statusTitle}\" aria-label=\"Show dependency graph for {escapeHtml (data.displayNumber.getD data.label)}\"></button>{blueprintLink}{paperLink}</div>
 </div></div>"
 
 /-- Render the heading grid cell (row 1, col 1) for paper variant -/
@@ -204,10 +207,9 @@ def renderHeadingCellPaper (data : SbsData) (blueprintUrl : Option String)
     | some url => s!" <a class=\"paper-link\" href=\"{escapeHtml url}\">[paper]</a>"
     | none => ""
   let badge := renderVerificationBadge data.status
-  let statusColor := statusToColor data.status
   let statusTitle := statusToDisplayString data.status
   let statusCss := statusToCssClass data.status
-  let statusDot := s!"<button class=\"status-dot-btn paper-status-dot\" data-node-id=\"{escapeHtml data.id}\" data-status=\"{statusCss}\" style=\"background:{statusColor}\" title=\"{statusTitle}\" aria-label=\"Show dependency graph for {escapeHtml (data.displayNumber.getD data.label)}\"></button>"
+  let statusDot := s!"<button class=\"status-dot-btn paper-status-dot {statusCss}\" data-node-id=\"{escapeHtml data.id}\" data-status=\"{statusCss}\" title=\"{statusTitle}\" aria-label=\"Show dependency graph for {escapeHtml (data.displayNumber.getD data.label)}\"></button>"
   s!"<div class=\"sbs-heading\"><div class=\"paper-theorem-header\">
   <span class=\"paper-theorem-type\">{capitalize envType} {displayLabel}</span>
   {statusDot}{badge}{blueprintLink}{paperLink}

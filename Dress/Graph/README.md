@@ -9,7 +9,7 @@ Dependency graph construction, validation, Sugiyama hierarchical layout, and out
 | `Types.lean` | ~9 KB | Core types: `Node`, `Edge`, `Graph`, `StatusCounts`, `CheckResults`, `CoverageResult`, `AdjIndex` |
 | `Build.lean` | ~19 KB | Graph construction from `Architect.Node`s, validation (`findComponents`, `detectCycles`), `computeFullyProven`, coverage |
 | `Layout.lean` | ~59 KB | Sugiyama layout algorithm: layer assignment, crossing reduction, coordinate assignment, edge routing |
-| `Svg.lean` | ~16 KB | SVG rendering with 7-color model (6 statuses + axiom), node shapes, edge paths, legend |
+| `Svg.lean` | ~16 KB | SVG rendering with 7-status color model, node shapes, edge paths, legend |
 | `Json.lean` | ~8 KB | JSON serialization for `Graph`, `LayoutGraph`, `CheckResults`, `CoverageResult` |
 | `Subgraph.lean` | ~11 KB | BFS-based subgraph extraction with incremental depth levels and max-depth computation via topological sort |
 
@@ -98,7 +98,7 @@ These allow PNT (591 nodes) to render in ~15 seconds while maintaining quality f
 | Status | Color | Hex |
 |--------|-------|-----|
 | notReady | Vivid Orange | #E8820C |
-| ready | Deep Teal/Cyan | #0097A7 |
+| wip | Deep Teal | #0097A7 |
 | sorry | Vivid Red | #C62828 |
 | proven | Medium Green | #66BB6A |
 | fullyProven | Deep Forest Green | #1B5E20 |

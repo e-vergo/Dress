@@ -16,15 +16,14 @@ namespace Dress.Graph.Svg
 structure SvgConfig where
   /-- Background color -/
   backgroundColor : String := "#ffffff"
-  /-- Node fill colors by status (6 statuses) -/
+  /-- Node fill colors by status (7 statuses) -/
   notReadyColor : String := "#E8820C"     -- Vivid orange - not ready to formalize
-  readyColor : String := "#0097A7"        -- Deep teal/cyan - ready to formalize
+  wipColor : String := "#0097A7"          -- Deep teal/cyan - work in progress
   sorryColor : String := "#C62828"        -- Vivid red - has sorryAx
   provenColor : String := "#66BB6A"       -- Medium green - formalized without sorry
   fullyProvenColor : String := "#1B5E20"  -- Deep forest green - this + all deps proven
+  axiomColor : String := "#7E57C2"        -- Vivid purple - axiom (no proof expected)
   mathlibReadyColor : String := "#42A5F5" -- Vivid blue - ready to upstream
-  /-- Axiom color (overrides status for axiom nodes) -/
-  axiomColor : String := "#7E57C2"       -- Vivid purple
   /-- Node stroke color -/
   strokeColor : String := "#000000"
   /-- Node stroke width -/
@@ -46,16 +45,17 @@ structure SvgConfig where
 /-- Get fill color for a node status -/
 def getStatusColor (config : SvgConfig) : NodeStatus → String
   | .notReady => config.notReadyColor
-  | .ready => config.readyColor
+  | .wip => config.wipColor
   | .sorry => config.sorryColor
   | .proven => config.provenColor
   | .fullyProven => config.fullyProvenColor
+  | .axiom => config.axiomColor
   | .mathlibReady => config.mathlibReadyColor
 
 /-- Get text color based on node status - white for dark backgrounds -/
 def getTextColor (config : SvgConfig) : NodeStatus → String
-  | .sorry | .fullyProven => "#ffffff"
-  | .ready => "#ffffff"
+  | .sorry | .fullyProven | .axiom => "#ffffff"
+  | .wip => "#ffffff"
   | _ => config.textColor
 
 /-- Escape text for SVG -/
@@ -69,10 +69,11 @@ def escapeXml (s : String) : String :=
 /-- Get CSS class name for a node status (for dark mode targeting) -/
 def statusCssClass : NodeStatus → String
   | .notReady => "status-not-ready"
-  | .ready => "status-ready"
+  | .wip => "status-wip"
   | .sorry => "status-sorry"
   | .proven => "status-proven"
   | .fullyProven => "status-fully-proven"
+  | .axiom => "status-axiom"
   | .mathlibReady => "status-mathlib-ready"
 
 /-- Generate SVG for a single node.
@@ -81,9 +82,7 @@ def statusCssClass : NodeStatus → String
     focal node in a subgraph view. -/
 def renderNode (config : SvgConfig) (node : Layout.LayoutNode)
     (baseNodeId : Option String := none) : String :=
-  let fillColor := if node.node.envType.toLower == "axiom"
-    then config.axiomColor
-    else getStatusColor config node.node.status
+  let fillColor := getStatusColor config node.node.status
   let href := node.node.url
   let label := escapeXml node.node.label
   let nodeId := escapeXml node.node.id
@@ -92,9 +91,7 @@ def renderNode (config : SvgConfig) (node : Layout.LayoutNode)
   let cy := node.y + node.height / 2
 
   -- CSS class for dark mode targeting
-  let statusClass := if node.node.envType.toLower == "axiom"
-    then "status-axiom"
-    else statusCssClass node.node.status
+  let statusClass := statusCssClass node.node.status
 
   -- Dotted border for manually-tagged nodes (notReady, ready, mathlibReady, inMathlib)
   let strokeDash := if node.node.isManuallyTagged then " stroke-dasharray=\"2,2\"" else ""
@@ -131,9 +128,7 @@ def renderNode (config : SvgConfig) (node : Layout.LayoutNode)
   s!"  <title>{nodeId}</title>\n" ++
   s!"  <a href=\"{href}\" target=\"_parent\">\n" ++
   shapeElement ++
-  let textColor := if node.node.envType.toLower == "axiom"
-    then "#ffffff"  -- white on purple
-    else getTextColor config node.node.status
+  let textColor := getTextColor config node.node.status
   s!"    <text class=\"node-text\" x=\"{cx}\" y=\"{textY}\" " ++
   s!"text-anchor=\"middle\" font-family=\"{config.fontFamily}\" " ++
   s!"font-size=\"{config.fontSize}\" fill=\"{textColor}\">" ++
@@ -242,15 +237,15 @@ def renderLegend (config : SvgConfig) (_x _y : Float) : String := Id.run do
   let padding : Float := 15.0
   let sectionGap : Float := 20.0
 
-  -- Color items - all 6 statuses
+  -- Color items - all 7 statuses
   let colorItems := #[
     ("Not Ready", config.notReadyColor),
-    ("Ready", config.readyColor),
+    ("Work in Progress", config.wipColor),
     ("Sorry", config.sorryColor),
     ("Proven", config.provenColor),
     ("Fully Proven", config.fullyProvenColor),
-    ("Mathlib Ready", config.mathlibReadyColor),
-    ("Axiom", config.axiomColor)
+    ("Axiom", config.axiomColor),
+    ("Mathlib Ready", config.mathlibReadyColor)
   ]
 
   -- Shape items (ellipse for theorems, box for definitions)
