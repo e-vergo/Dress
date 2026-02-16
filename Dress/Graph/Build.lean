@@ -392,7 +392,7 @@ def fromNodes (nodes : Array Dress.NodeWithPos) : Graph :=
 
 /-- Build graph from the environment's blueprint extension -/
 def fromEnvironment (env : Lean.Environment) : Lean.CoreM Graph := do
-  let entries := (Architect.blueprintExt.getState env).toArray.toList
+  let entries := Architect.blueprintExt.getEntries env
   let nodesData ← entries.toArray.mapM fun (_, node) => do
     let mut dressNode ← Dress.toDressNodeWithPos node
     -- Check if the underlying Lean constant is an axiom and override envType
