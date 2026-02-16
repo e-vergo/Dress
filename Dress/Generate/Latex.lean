@@ -38,9 +38,15 @@ def getDefaultLatexEnv (name : Name) : CommandElabM String := do
   let some info := env.find? name | return "theorem"
   match info with
   | .thmInfo _ => return "theorem"
-  | .defnInfo _ => return "definition"
+  | .defnInfo dv =>
+    if Meta.isInstanceCore env name then return "instance"
+    else if dv.hints.isAbbrev then return "abbrev"
+    else return "definition"
   | .opaqueInfo _ => return "definition"
-  | .inductInfo _ => return "definition"
+  | .inductInfo _ =>
+    if isClass env name then return "class"
+    else if isStructure env name then return "structure"
+    else return "definition"
   | .ctorInfo _ => return "definition"
   | .recInfo _ => return "definition"
   | _ => return "theorem"

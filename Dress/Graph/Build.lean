@@ -401,6 +401,22 @@ def fromEnvironment (env : Lean.Environment) : Lean.CoreM Graph := do
       let updatedStatement := { dressNode.toNode.statement with latexEnv := "axiom" }
       let updatedNode := { dressNode.toNode with statement := updatedStatement }
       dressNode := { dressNode with toNode := updatedNode }
+    | some (.inductInfo _) =>
+      let kind := if Lean.isClass env node.name then some "class"
+        else if Lean.isStructure env node.name then some "structure"
+        else none
+      if let some k := kind then
+        let updatedStatement := { dressNode.toNode.statement with latexEnv := k }
+        let updatedNode := { dressNode.toNode with statement := updatedStatement }
+        dressNode := { dressNode with toNode := updatedNode }
+    | some (.defnInfo dv) =>
+      let kind := if Lean.Meta.isInstanceCore env node.name then some "instance"
+        else if dv.hints.isAbbrev then some "abbrev"
+        else none
+      if let some k := kind then
+        let updatedStatement := { dressNode.toNode.statement with latexEnv := k }
+        let updatedNode := { dressNode.toNode with statement := updatedStatement }
+        dressNode := { dressNode with toNode := updatedNode }
     | _ => pure ()
     -- Infer uses from actual Lean code dependencies
     let (statementUses, proofUses) ← node.inferUses
@@ -432,13 +448,19 @@ private def isEligibleConstant (ci : Lean.ConstantInfo) : Bool :=
   | .ctorInfo _ | .recInfo _ | .quotInfo _ => false
 
 /-- Get a human-readable kind string for a constant -/
-private def constantKind (ci : Lean.ConstantInfo) : String :=
+private def constantKind (env : Lean.Environment) (name : Lean.Name) (ci : Lean.ConstantInfo) : String :=
   match ci with
-  | .defnInfo _   => "def"
+  | .defnInfo dv  =>
+    if Lean.Meta.isInstanceCore env name then "instance"
+    else if dv.hints.isAbbrev then "abbrev"
+    else "def"
   | .thmInfo _    => "theorem"
   | .axiomInfo _  => "axiom"
   | .opaqueInfo _ => "opaque"
-  | .inductInfo _ => "inductive"
+  | .inductInfo _ =>
+    if Lean.isClass env name then "class"
+    else if Lean.isStructure env name then "structure"
+    else "inductive"
   | _             => "other"
 
 /-- Check if a module name is a project-local module (matches or is a submodule of
@@ -475,7 +497,7 @@ def computeCoverage (env : Lean.Environment) (projectModules : Array Lean.Name)
         uncovered := uncovered.push {
           name := name.toString
           moduleName := modName.toString
-          kind := constantKind ci
+          kind := constantKind env name ci
         }
 
   let coveragePercent :=
