@@ -96,6 +96,19 @@ private def isKeywordLine (line : String) : Bool :=
     let stripped := stripPrefixes (stripInlineAttrs (stripPrefixes trimmed))
     declKeywords.any (fun kw => stripped.startsWith kw)
 
+/-- Keywords that `@[blueprint]` can validly decorate.
+    Excludes `instance` (requires priority, not attribute options),
+    `notation`/`macro` (not declaration-level), and `opaque`. -/
+private def taggableKeywords : Array String :=
+  #["theorem", "def", "lemma", "structure", "class",
+    "abbrev", "inductive", "axiom"]
+
+/-- Extract the declaration keyword from a source line, stripping prefixes and inline attributes.
+    Returns `none` if no known keyword is found. -/
+private def getKeywordFromLine (line : String) : Option String :=
+  let stripped := stripPrefixes (stripInlineAttrs (stripPrefixes (line.trimAsciiStart.toString)))
+  declKeywords.find? (fun kw => stripped.startsWith kw)
+
 /-- Check if a line is an attribute line (starts with `@[` after optional whitespace). -/
 private def isAttributeLine (line : String) : Bool :=
   line.trimAsciiStart.toString.startsWith "@["
@@ -173,6 +186,17 @@ def resolveInsertion (env : Environment) (name : Name) (kind : String) (moduleNa
       if isKeywordLine lines[checkIdx]! then
         keywordLine := checkIdx
         break
+
+  -- Validate: the keyword on this line must be taggable (not instance, notation, etc.)
+  -- This is a source-level guard that catches cases where the environment-level kind
+  -- detection missed (e.g., instances not in instData, notation declarations).
+  let actualKeyword := getKeywordFromLine lines[keywordLine]!
+  match actualKeyword with
+  | some kw =>
+    unless taggableKeywords.contains kw do
+      return none  -- Not a taggable keyword (e.g., instance, opaque)
+  | none =>
+    return none  -- Can't identify keyword — skip to be safe
 
   -- Walk backward from keyword line to find existing attribute lines.
   -- Track the closest attribute line (right above the keyword).
@@ -279,27 +303,29 @@ def runAutoTag (env : Environment) (modules : Array Name) (dryRun : Bool)
   -- Resolve insertion points for each uncovered declaration
   let mut insertions : Array TagInsertion := #[]
   for uncov in coverage.uncovered do
-    -- Skip instance declarations: @[blueprint] doesn't work on anonymous instances
-    if uncov.kind == "instance" then continue
+    -- Skip non-taggable declaration kinds at the environment level.
+    -- instance: @[blueprint] conflicts with instance priority syntax
+    -- other: notation, macro, and other non-standard declarations
+    if uncov.kind == "instance" || uncov.kind == "other" then continue
     let name := uncov.name.toName
     if let some ins ← resolveInsertion env name uncov.kind uncov.moduleName then
       insertions := insertions.push ins
 
   IO.eprintln s!"  Resolved {insertions.size} insertion points"
 
-  -- Deduplicate insertions that share the same (file, line).
-  -- Auto-generated declarations (from @[simps], structure projections, etc.) often
-  -- resolve to the same source position as their parent.  Only one @[blueprint]
-  -- should be emitted per insertion site.  When merging we prefer the
-  -- theorem/lemma form (which includes statement+proof placeholders) over the
-  -- bare form.
+  -- Deduplicate insertions that share the same (file, line region).
+  -- Auto-generated declarations (from @[simps], @[to_additive], structure projections,
+  -- etc.) often resolve to the same or nearby source positions.
+  -- Only one @[blueprint] should be emitted per insertion site.
+  -- When merging we prefer the theorem/lemma form (with statement+proof placeholders).
+  --
+  -- Two-pass dedup: exact line match, then proximity merge (within 5 lines).
   let mut deduped : Std.HashMap (String × Nat) TagInsertion := {}
   let mut skippedCount : Nat := 0
   for ins in insertions do
     let key := (ins.filePath.toString, ins.insertLine)
     match deduped[key]? with
     | some existing =>
-      -- Keep the richer annotation (theorem/lemma style with statement+proof)
       skippedCount := skippedCount + 1
       let insIsThm := ins.kind == "theorem" || ins.kind == "lemma"
       let existIsThm := existing.kind == "theorem" || existing.kind == "lemma"
@@ -307,7 +333,21 @@ def runAutoTag (env : Environment) (modules : Array Name) (dryRun : Bool)
         deduped := deduped.insert key ins
     | none =>
       deduped := deduped.insert key ins
-  insertions := deduped.values.toArray
+  -- Proximity merge: for same file, if two insertions are within 5 lines,
+  -- keep only the earlier one (handles @[to_additive] generating a second
+  -- declaration that resolves to a nearby line).
+  let dedupedArr := deduped.values.toArray
+  let mut proximityDeduped : Array TagInsertion := #[]
+  for ins in dedupedArr do
+    let dominated := proximityDeduped.any fun existing =>
+      existing.filePath == ins.filePath &&
+      (if ins.insertLine >= existing.insertLine
+       then ins.insertLine - existing.insertLine < 5
+       else existing.insertLine - ins.insertLine < 5)
+    unless dominated do
+      proximityDeduped := proximityDeduped.push ins
+    if dominated then skippedCount := skippedCount + 1
+  insertions := proximityDeduped
 
   if skippedCount > 0 then
     IO.eprintln s!"  Deduplicated {skippedCount} insertions sharing same source line ({insertions.size} unique)"
