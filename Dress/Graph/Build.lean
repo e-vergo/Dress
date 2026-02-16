@@ -398,8 +398,14 @@ def fromNodes (nodes : Array Dress.NodeWithPos) : Graph :=
 
 /-- Build graph from the environment's blueprint extension -/
 def fromEnvironment (env : Lean.Environment) : Lean.CoreM Graph := do
-  let nameMap := Architect.blueprintExt.getState env
-  let nodesData ← nameMap.toArray.mapM fun (_, node) => do
+  -- Collect from all imported modules + current module.
+  -- Uses getModuleEntries/getEntries (entry-level access) to avoid
+  -- Thunk-vs-direct type ambiguity in getState across batteries versions.
+  let mut allEntries : Array (Lean.Name × Architect.Node) := #[]
+  for i in [:env.allImportedModuleNames.size] do
+    allEntries := allEntries ++ Architect.blueprintExt.getModuleEntries env i
+  allEntries := allEntries ++ Architect.blueprintExt.getEntries env
+  let nodesData ← allEntries.mapM fun (_, node) => do
     let mut dressNode ← Dress.toDressNodeWithPos node
     -- Check if the underlying Lean constant is an axiom and override envType
     match env.find? node.name with
