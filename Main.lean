@@ -3,6 +3,7 @@ Copyright (c) 2025 Dress contributors. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 -/
 import Dress
+import Dress.AutoTag
 import Lean
 import Cli
 
@@ -402,6 +403,34 @@ def graphCmd := `[Cli|
     ...modules : String; "The modules to include in the dependency graph."
 ]
 
+/-- Run the auto-tag command: discover uncovered declarations and add @[blueprint] attributes. -/
+def runAutoTagCmd (p : Parsed) : IO UInt32 := do
+  let modules := p.variableArgsAs! String |>.map (·.toName)
+  let dryRun := p.hasFlag "dry-run"
+  if modules.isEmpty then
+    IO.eprintln "Error: At least one module must be specified."
+    return 1
+  runEnvOfImports modules {} do
+    let insertions ← Dress.AutoTag.runAutoTag (← getEnv) modules dryRun
+    if dryRun then
+      IO.println s!"Would insert {insertions.size} @[blueprint] attributes:"
+      for ins in insertions do
+        IO.println s!"  {ins.filePath}:{ins.insertLine + 1} ({ins.kind}) {ins.declName}"
+    else
+      IO.println s!"Inserted {insertions.size} @[blueprint] attributes."
+  return 0
+
+def autoTagCmd := `[Cli|
+  "auto-tag" VIA runAutoTagCmd;
+  "Automatically add @[blueprint] attributes to uncovered declarations."
+
+  FLAGS:
+    n, "dry-run"; "Show what would be changed without modifying files."
+
+  ARGS:
+    ...modules : String; "The project modules to auto-tag (e.g. OSforGFF)."
+]
+
 def blueprintCmd : Cmd := `[Cli|
   "Dress" NOOP;
   "A dressing generator for Lean 4 blueprint projects."
@@ -409,7 +438,8 @@ def blueprintCmd : Cmd := `[Cli|
   SUBCOMMANDS:
     singleCmd;
     indexCmd;
-    graphCmd
+    graphCmd;
+    autoTagCmd
 ]
 
 def main (args : List String) : IO UInt32 :=
