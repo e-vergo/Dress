@@ -86,11 +86,83 @@ def scaffoldFile (path : System.FilePath) (content : String)
   return true
 
 -- ============================================================================
+-- Asset Path Discovery
+-- ============================================================================
+
+/-- Search for `dress-blueprint-action/assets` by walking up from the project
+    directory. Returns a relative path like `../../toolchain/dress-blueprint-action/assets`
+    or falls back to `../dress-blueprint-action/assets` if not found. -/
+partial def findAssetsDir (projectDir : System.FilePath) : IO String := do
+  -- Resolve to absolute path for reliable parent traversal
+  let absDir ← IO.Process.run { cmd := "pwd", cwd := projectDir }
+  let absDir := absDir.trimAscii.toString
+  -- Walk up to 5 levels looking for dress-blueprint-action/assets
+  let mut current := System.FilePath.mk absDir
+  let mut depth : Nat := 0
+  while depth < 5 do
+    -- Check common locations relative to current directory
+    for candidate in #["toolchain/dress-blueprint-action/assets",
+                       "dress-blueprint-action/assets"] do
+      let full := current / candidate
+      if ← full.pathExists then
+        -- Build relative path: "../" * (depth) + candidate
+        let dots := String.join (List.replicate depth "../")
+        return dots ++ candidate
+    current := current / ".."
+    depth := depth + 1
+  -- Fallback for standalone repos (CI overrides this anyway)
+  return "../dress-blueprint-action/assets"
+
+-- ============================================================================
+-- Directory Walking
+-- ============================================================================
+
+/-- Recursively collect all `.lean` files under a directory. -/
+partial def collectLeanFiles (dir : System.FilePath) : IO (Array System.FilePath) := do
+  let mut result : Array System.FilePath := #[]
+  if !(← dir.pathExists) then return result
+  let entries ← dir.readDir
+  for entry in entries do
+    let info ← entry.path.metadata
+    if info.type == .dir then
+      let sub ← collectLeanFiles entry.path
+      result := result ++ sub
+    else if entry.fileName.endsWith ".lean" then
+      result := result.push entry.path
+  return result
+
+-- ============================================================================
+-- Git Remote Detection
+-- ============================================================================
+
+/-- Detect the GitHub URL from `git remote get-url origin`.
+    Normalizes SSH URLs (git@github.com:owner/repo.git) to HTTPS.
+    Returns none if git fails or the URL doesn't look like GitHub. -/
+def detectGitHubUrl (projectDir : System.FilePath) : IO (Option String) := do
+  let result ← IO.Process.output {
+    cmd := "git", args := #["remote", "get-url", "origin"], cwd := projectDir
+  }
+  if result.exitCode != 0 then return none
+  let url := result.stdout.trimAscii.toString
+  -- Normalize git@github.com:owner/repo.git → https://github.com/owner/repo
+  let httpsUrl := if url.startsWith "git@github.com:" then
+    "https://github.com/" ++ (url.dropPrefix "git@github.com:").toString
+  else
+    url
+  -- Strip trailing .git
+  let clean := if httpsUrl.endsWith ".git" then
+    (httpsUrl.dropSuffix ".git").toString
+  else httpsUrl
+  -- Only return if it looks like a GitHub URL
+  if clean.startsWith "https://github.com/" then return some clean
+  return none
+
+-- ============================================================================
 -- Template Generation
 -- ============================================================================
 
 /-- Generate `runway.json` content. -/
-def mkRunwayJson (projectName title githubUrl baseUrl : String) : String :=
+def mkRunwayJson (projectName title githubUrl baseUrl assetsDir : String) : String :=
   "{\n" ++
   "  \"title\": \"" ++ title ++ "\",\n" ++
   "  \"projectName\": \"" ++ projectName ++ "\",\n" ++
@@ -98,7 +170,7 @@ def mkRunwayJson (projectName title githubUrl baseUrl : String) : String :=
   "  \"baseUrl\": \"" ++ baseUrl ++ "\",\n" ++
   "  \"docgen4Url\": null,\n" ++
   "  \"runwayDir\": \"runway\",\n" ++
-  "  \"assetsDir\": \"../dress-blueprint-action/assets\"\n" ++
+  "  \"assetsDir\": \"" ++ assetsDir ++ "\"\n" ++
   "}\n"
 
 /-- Generate CI workflow YAML content. -/
@@ -137,35 +209,71 @@ def mkCIWorkflow : String :=
   "        id: deployment\n" ++
   "        uses: actions/deploy-pages@v4\n"
 
-/-- Generate `blueprint.tex` content. -/
-def mkBlueprintTex (title libName : String) : String :=
-  "\\documentclass{article}\n" ++
-  "\n" ++
-  "\\input{../../.lake/build/dressed/library/" ++ libName ++ ".tex}\n" ++
-  "\n" ++
-  "\\usepackage{amsmath, amsthm, amssymb}\n" ++
-  "\\usepackage{hyperref}\n" ++
-  "\n" ++
-  "\\theoremstyle{definition}\n" ++
-  "\\newtheorem{definition}{Definition}[section]\n" ++
-  "\\newtheorem{axiom}{Axiom}[section]\n" ++
-  "\\newtheorem{theorem}{Theorem}[section]\n" ++
-  "\\newtheorem{lemma}{Lemma}[section]\n" ++
-  "\\newtheorem{corollary}{Corollary}[section]\n" ++
-  "\n" ++
-  "\\title{" ++ title ++ " Blueprint}\n" ++
-  "\\author{}\n" ++
-  "\n" ++
-  "\\begin{document}\n" ++
-  "\\maketitle\n" ++
-  "\n" ++
-  "\\chapter{Introduction}\n" ++
-  "\n" ++
-  "% Add your blueprint content here.\n" ++
-  "% Use \\inputleannode{label} to include individual declarations.\n" ++
-  "% Use \\inputleanmodule{Module.Name} to include all declarations from a module.\n" ++
-  "\n" ++
-  "\\end{document}\n"
+/-- A chapter entry: directory name (for chapter title) and module names within it. -/
+structure ChapterEntry where
+  name : String
+  modules : Array String
+  deriving Repr
+
+/-- Scan the library directory and build chapter entries from its structure.
+    Each subdirectory becomes a chapter; top-level .lean files go into "Main Results". -/
+partial def scanChapters (libDir : System.FilePath) (libName : String) :
+    IO (Array ChapterEntry) := do
+  if !(← libDir.pathExists) then return #[]
+  let entries ← libDir.readDir
+  let mut chapters : Array ChapterEntry := #[]
+  let mut topLevelModules : Array String := #[]
+  -- Sort entries for deterministic output
+  let sorted := entries.toList.toArray.qsort (·.fileName < ·.fileName)
+  for entry in sorted do
+    let info ← entry.path.metadata
+    if info.type == .dir then
+      -- Subdirectory → chapter with all .lean files inside
+      let files ← collectLeanFiles entry.path
+      let moduleNames : Array String := files.map fun f =>
+        let rel := (f.toString.dropPrefix (libDir.toString ++ "/")).toString
+        libName ++ "." ++ ((rel.dropSuffix ".lean").toString.replace "/" ".")
+      let sortedModules := moduleNames.qsort (· < ·)
+      if sortedModules.size > 0 then
+        chapters := chapters.push { name := entry.fileName, modules := sortedModules }
+    else if entry.fileName.endsWith ".lean" then
+      -- Top-level file → collect for "Main Results"
+      let moduleName := libName ++ "." ++ (entry.fileName.dropSuffix ".lean").toString
+      topLevelModules := topLevelModules.push moduleName
+  -- Add top-level modules as final chapter
+  if topLevelModules.size > 0 then
+    let sortedTop := topLevelModules.qsort (· < ·)
+    chapters := chapters.push { name := "Main Results", modules := sortedTop }
+  return chapters
+
+/-- Generate `blueprint.tex` content with chapters mirroring repo structure. -/
+def mkBlueprintTex (title libName : String) (chapters : Array ChapterEntry) : String :=
+  let header :=
+    "\\documentclass{article}\n" ++
+    "\n" ++
+    "\\input{../../.lake/build/dressed/library/" ++ libName ++ ".tex}\n" ++
+    "\n" ++
+    "\\usepackage{amsmath, amsthm, amssymb}\n" ++
+    "\\usepackage{hyperref}\n" ++
+    "\n" ++
+    "\\theoremstyle{definition}\n" ++
+    "\\newtheorem{definition}{Definition}[section]\n" ++
+    "\\newtheorem{axiom}{Axiom}[section]\n" ++
+    "\\newtheorem{theorem}{Theorem}[section]\n" ++
+    "\\newtheorem{lemma}{Lemma}[section]\n" ++
+    "\\newtheorem{corollary}{Corollary}[section]\n" ++
+    "\n" ++
+    "\\title{" ++ title ++ " Blueprint}\n" ++
+    "\\author{}\n" ++
+    "\n" ++
+    "\\begin{document}\n" ++
+    "\\maketitle\n"
+  let chapterContent := chapters.foldl (init := "") fun acc ch =>
+    acc ++ "\n\\chapter{" ++ ch.name ++ "}\n" ++
+    ch.modules.foldl (init := "") fun acc2 m =>
+      acc2 ++ "\\inputleanmodule{" ++ m ++ "}\n"
+  let footer := "\n\\end{document}\n"
+  header ++ chapterContent ++ footer
 
 -- ============================================================================
 -- Import Injection
@@ -222,24 +330,6 @@ def injectImport (path : System.FilePath) (dryRun : Bool) : IO Bool := do
   return true
 
 -- ============================================================================
--- Directory Walking
--- ============================================================================
-
-/-- Recursively collect all `.lean` files under a directory. -/
-partial def collectLeanFiles (dir : System.FilePath) : IO (Array System.FilePath) := do
-  let mut result : Array System.FilePath := #[]
-  if !(← dir.pathExists) then return result
-  let entries ← dir.readDir
-  for entry in entries do
-    let info ← entry.path.metadata
-    if info.type == .dir then
-      let sub ← collectLeanFiles entry.path
-      result := result ++ sub
-    else if entry.fileName.endsWith ".lean" then
-      result := result.push entry.path
-  return result
-
--- ============================================================================
 -- Main Entry Point
 -- ============================================================================
 
@@ -268,13 +358,18 @@ def runQuickstart (projectDir : System.FilePath) (githubUrl title baseUrl : Opti
 
   -- Resolve optional parameters
   let title := title.getD projectName
-  let githubUrl := githubUrl.getD ("https://github.com/OWNER/" ++ projectName)
+  let detectedUrl ← detectGitHubUrl projectDir
+  let githubUrl := githubUrl.orElse (fun _ => detectedUrl)
+    |>.getD ("https://github.com/OWNER/" ++ projectName)
   let baseUrl := baseUrl.getD ("/" ++ projectName ++ "/")
 
   IO.println ("quickstart: Set up " ++ projectName ++ " as an SBS blueprint project")
   if dryRun then
     IO.println "(dry run -- no files will be written)"
   IO.println ""
+
+  -- Discover assets path
+  let assetsDir ← findAssetsDir projectDir
 
   -- Track created files for summary
   let mut created : Array String := #[]
@@ -283,7 +378,7 @@ def runQuickstart (projectDir : System.FilePath) (githubUrl title baseUrl : Opti
 
   -- runway.json
   let runwayPath := projectDir / "runway.json"
-  if ← scaffoldFile runwayPath (mkRunwayJson projectName title githubUrl baseUrl) force dryRun then
+  if ← scaffoldFile runwayPath (mkRunwayJson projectName title githubUrl baseUrl assetsDir) force dryRun then
     created := created.push "runway.json"
 
   -- .github/workflows/blueprint.yml
@@ -291,9 +386,10 @@ def runQuickstart (projectDir : System.FilePath) (githubUrl title baseUrl : Opti
   if ← scaffoldFile ciPath mkCIWorkflow force dryRun then
     created := created.push ".github/workflows/blueprint.yml"
 
-  -- runway/src/blueprint.tex
+  -- runway/src/blueprint.tex (auto-generated chapters from repo structure)
+  let chapters ← scanChapters (projectDir / libName) libName
   let blueprintTexPath := projectDir / "runway" / "src" / "blueprint.tex"
-  if ← scaffoldFile blueprintTexPath (mkBlueprintTex title libName) force dryRun then
+  if ← scaffoldFile blueprintTexPath (mkBlueprintTex title libName chapters) force dryRun then
     created := created.push "runway/src/blueprint.tex"
 
   -- ========== Inject imports ==========

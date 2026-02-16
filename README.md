@@ -65,7 +65,19 @@ name = "Dress"
 path = "../Dress"
 ```
 
-### 2. Mark Declarations
+### 2. Scaffold the Project (Recommended)
+
+Use the `quickstart` subcommand to generate configuration, LaTeX structure, and CI workflow automatically:
+
+```bash
+lake exe extract_blueprint quickstart
+```
+
+This creates `runway.json`, `blueprint.tex` (with chapters mirroring your directory structure), a GitHub Actions workflow, and injects `import Dress` into your `.lean` files. See [CLI Reference > quickstart](#quickstart) for flags and details.
+
+Alternatively, set up these files manually as described below.
+
+### 3. Mark Declarations
 
 ```lean
 import Dress  -- Re-exports @[blueprint] from LeanArchitect
@@ -80,7 +92,16 @@ theorem keyTheorem : P := by sorry
 def square (n : Nat) : Nat := n * n
 ```
 
-### 3. Build with Artifact Generation
+To bootstrap annotations on an existing codebase, use `auto-tag` after building:
+
+```bash
+lake build
+lake exe extract_blueprint auto-tag MyLib
+```
+
+See [CLI Reference > auto-tag](#auto-tag) for details.
+
+### 4. Build with Artifact Generation
 
 ```bash
 # Enable dress mode via environment variable
@@ -502,13 +523,13 @@ Dress/
   Render.lean          # Rendering utilities
   SubVersoExtract.lean # SubVerso extraction utilities
 
-Main.lean              # CLI executable (extract_blueprint)
+Main.lean              # CLI executable (extract_blueprint: graph, quickstart, auto-tag, single, index)
 lakefile.lean          # Package definition with Lake facets
 ```
 
 ## CLI Reference
 
-The `extract_blueprint` executable provides three subcommands:
+The `extract_blueprint` executable provides five subcommands:
 
 ### graph (Primary)
 
@@ -519,6 +540,46 @@ lake exe extract_blueprint graph --build .lake/build Module1 Module2
 ```
 
 Outputs `dep-graph.svg`, `dep-graph.json`, and `manifest.json` to `.lake/build/dressed/`.
+
+### quickstart
+
+Scaffold an existing Lean project into an SBS blueprint project. Creates `runway.json`, `.github/workflows/blueprint.yml`, and `runway/src/blueprint.tex` with auto-generated chapters mirroring the repository directory structure (subdirectories become chapters, top-level files become a "Main Results" chapter). Each chapter includes `\inputleanmodule{...}` directives for its modules. Also injects `import Dress` into all `.lean` files containing declarations.
+
+```bash
+# Basic usage (auto-detects GitHub URL and assets path)
+lake exe extract_blueprint quickstart
+
+# With explicit options
+lake exe extract_blueprint quickstart --title "My Project" --github-url "https://github.com/user/repo"
+
+# Preview without writing files
+lake exe extract_blueprint quickstart --dry-run
+
+# Overwrite existing files
+lake exe extract_blueprint quickstart --force
+```
+
+**Flags:**
+
+| Flag | Purpose |
+|------|---------|
+| `--title` | Project title for `runway.json` (default: project directory name) |
+| `--github-url` | GitHub URL (default: auto-detected from `git remote get-url origin`, SSH normalized to HTTPS) |
+| `--base-url` | Base URL for site (default: `/`) |
+| `--dry-run` | Print what would be created without writing files |
+| `--force` | Overwrite existing files (default: skip existing) |
+
+Safe to re-run: existing files are skipped unless `--force` is passed. The `assetsDir` field in `runway.json` is auto-discovered by walking up from the project directory looking for `dress-blueprint-action/assets`.
+
+### auto-tag
+
+Insert `@[blueprint]` attributes on declarations not yet annotated. Requires a compiled environment (`lake build` first).
+
+```bash
+lake exe extract_blueprint auto-tag MyLib
+```
+
+Scans all declarations in the given library and inserts `@[blueprint (statement := /-- -/) (proof := /-- -/)]` above each uncovered declaration. When a declaration already has an attribute block (e.g., `@[simp]`), injects `blueprint` into the existing block (`@[blueprint, simp]`) to avoid parser conflicts. Skips `instance` declarations (not valid blueprint targets).
 
 ### single (Deprecated)
 

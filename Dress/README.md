@@ -48,6 +48,8 @@ Additionally, **Serialize/** handles JSON/HTML serialization of SubVerso highlig
 
 - **During elaboration**: `Capture.ElabRules` intercepts `@[blueprint]` declarations, calls `Capture.InfoTree.captureHighlighting`, then `Generate.Declaration.writeDeclarationArtifactsFromNode`
 - **CLI (`extract_blueprint graph`)**: `Main.lean` loads modules via `Graph.fromEnvironment`, applies transitive reduction, runs `Layout.layout`, writes SVG/JSON/manifest
+- **CLI (`extract_blueprint quickstart`)**: Scaffolds an existing Lean project into an SBS blueprint project -- generates `runway.json`, `blueprint.tex`, CI workflow, and injects `import Dress` into source files
+- **CLI (`extract_blueprint auto-tag`)**: Scans a compiled environment for declarations missing `@[blueprint]` and inserts annotations above them
 - **Downstream (Runway)**: Loads `manifest.json` for dashboard data, per-declaration artifacts for side-by-side rendering, `dep-graph.svg`/`dep-graph.json` for the dependency graph page
 
 ## Artifact Output Structure
