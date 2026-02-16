@@ -77,9 +77,32 @@ structure StatusCounts where
   fullyProven : Nat := 0
   axiom_ : Nat := 0
   mathlibReady : Nat := 0
-  numAxioms : Nat := 0
   total : Nat := 0
-  deriving Repr, Inhabited, ToJson, FromJson
+  deriving Repr, Inhabited
+
+instance : ToJson StatusCounts where
+  toJson sc := .mkObj [
+    ("notReady", .num sc.notReady),
+    ("wip", .num sc.wip),
+    ("hasSorry", .num sc.hasSorry),
+    ("proven", .num sc.proven),
+    ("fullyProven", .num sc.fullyProven),
+    ("axiom", .num sc.axiom_),
+    ("mathlibReady", .num sc.mathlibReady),
+    ("total", .num sc.total)
+  ]
+
+instance : FromJson StatusCounts where
+  fromJson? j := do
+    let notReady ← j.getObjValAs? Nat "notReady" <|> pure 0
+    let wip ← j.getObjValAs? Nat "wip" <|> pure 0
+    let hasSorry ← j.getObjValAs? Nat "hasSorry" <|> pure 0
+    let proven ← j.getObjValAs? Nat "proven" <|> pure 0
+    let fullyProven ← j.getObjValAs? Nat "fullyProven" <|> pure 0
+    let axiom_ ← j.getObjValAs? Nat "axiom" <|> pure 0
+    let mathlibReady ← j.getObjValAs? Nat "mathlibReady" <|> pure 0
+    let total ← j.getObjValAs? Nat "total" <|> pure 0
+    return { notReady, wip, hasSorry, proven, fullyProven, axiom_, mathlibReady, total }
 
 /-- An edge in the dependency graph -/
 structure Edge where
@@ -151,9 +174,6 @@ def Graph.computeStatusCounts (g : Graph) : StatusCounts := Id.run do
   let mut counts : StatusCounts := {}
   for node in g.nodes do
     counts := { counts with total := counts.total + 1 }
-    -- Count axioms by envType
-    if node.envType.toLower == "axiom" then
-      counts := { counts with numAxioms := counts.numAxioms + 1 }
     match node.status with
     | .notReady => counts := { counts with notReady := counts.notReady + 1 }
     | .wip => counts := { counts with wip := counts.wip + 1 }
