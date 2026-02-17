@@ -313,13 +313,11 @@ def runAutoTag (env : Environment) (modules : Array Name) (dryRun : Bool)
 
   IO.eprintln s!"  Resolved {insertions.size} insertion points"
 
-  -- Deduplicate insertions that share the same (file, line region).
+  -- Deduplicate insertions that target the exact same (file, line).
   -- Auto-generated declarations (from @[simps], @[to_additive], structure projections,
-  -- etc.) often resolve to the same or nearby source positions.
+  -- etc.) may resolve to the same source position.
   -- Only one @[blueprint] should be emitted per insertion site.
   -- When merging we prefer the theorem/lemma form (with statement+proof placeholders).
-  --
-  -- Two-pass dedup: exact line match, then proximity merge (within 5 lines).
   let mut deduped : Std.HashMap (String × Nat) TagInsertion := {}
   let mut skippedCount : Nat := 0
   for ins in insertions do
@@ -333,21 +331,7 @@ def runAutoTag (env : Environment) (modules : Array Name) (dryRun : Bool)
         deduped := deduped.insert key ins
     | none =>
       deduped := deduped.insert key ins
-  -- Proximity merge: for same file, if two insertions are within 5 lines,
-  -- keep only the earlier one (handles @[to_additive] generating a second
-  -- declaration that resolves to a nearby line).
-  let dedupedArr := deduped.values.toArray
-  let mut proximityDeduped : Array TagInsertion := #[]
-  for ins in dedupedArr do
-    let dominated := proximityDeduped.any fun existing =>
-      existing.filePath == ins.filePath &&
-      (if ins.insertLine >= existing.insertLine
-       then ins.insertLine - existing.insertLine < 5
-       else existing.insertLine - ins.insertLine < 5)
-    unless dominated do
-      proximityDeduped := proximityDeduped.push ins
-    if dominated then skippedCount := skippedCount + 1
-  insertions := proximityDeduped
+  insertions := deduped.values.toArray
 
   if skippedCount > 0 then
     IO.eprintln s!"  Deduplicated {skippedCount} insertions sharing same source line ({insertions.size} unique)"

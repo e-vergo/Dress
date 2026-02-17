@@ -146,8 +146,9 @@ def elabBlueprintDeclaration : CommandElab := fun stx => do
     throwUnsupportedSyntax
   let decl := stx[1]
   let declKind := decl.getKind
-  -- Handle theorem/lemma (both use Command.theorem kind)
-  unless declKind == ``Lean.Parser.Command.theorem do
+  -- Handle theorem/lemma (both use Command.theorem kind) and axiom declarations
+  unless declKind == ``Lean.Parser.Command.theorem ||
+         declKind == ``Lean.Parser.Command.axiom do
     throwUnsupportedSyntax
   if (← inCaptureHookM) then
     throwUnsupportedSyntax

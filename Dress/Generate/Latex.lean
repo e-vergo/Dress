@@ -49,6 +49,7 @@ def getDefaultLatexEnv (name : Name) : CommandElabM String := do
     else return "definition"
   | .ctorInfo _ => return "definition"
   | .recInfo _ => return "definition"
+  | .axiomInfo _ => return "axiom"
   | _ => return "theorem"
 
 /-- Generate .tex content for a single @[blueprint] declaration from an Architect.Node.
