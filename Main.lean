@@ -214,7 +214,7 @@ def runGraphCmd (p : Parsed) : IO UInt32 := do
     let coverage := Graph.computeCoverage (← getEnv) modules
 
     -- Collect axiom tracking data
-    let axiomTracking := Graph.collectAxioms (← getEnv) modules
+    let axiomTracking := Graph.collectAxioms (← getEnv) modules (some reducedGraph)
 
     -- Write enhanced manifest with stats and dashboard metadata
     let manifestPath := dressedDir / "manifest.json"

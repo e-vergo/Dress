@@ -100,7 +100,8 @@ def getShape (envType : String) : NodeShape :=
   | _ => .ellipse  -- default to ellipse for unknown types
 
 /-- PASS 1: Register a node's label and create the graph node (no edges) -/
-def registerNode (dressNode : Dress.NodeWithPos) (hasSorry : Bool) : BuilderM Unit := do
+def registerNode (dressNode : Dress.NodeWithPos) (hasSorry : Bool)
+    (axiomDeps : Array String := #[]) : BuilderM Unit := do
   let node := dressNode.toNode
   let label := node.latexLabel
   let envType := node.statement.latexEnv
@@ -141,6 +142,7 @@ def registerNode (dressNode : Dress.NodeWithPos) (hasSorry : Bool) : BuilderM Un
     potentialIssue := node.potentialIssue
     technicalDebt := node.technicalDebt
     misc := node.misc
+    axiomDeps := if axiomDeps.isEmpty then none else some axiomDeps
   }
   addNode graphNode
 
@@ -158,12 +160,13 @@ def addNodeEdges (dressNode : Dress.NodeWithPos)
   for dep in proofUses do
     addEdge dep label .solid
 
-/-- Data for building a graph node: DressNode, hasSorry, statementUses, proofUses -/
+/-- Data for building a graph node: DressNode, hasSorry, statementUses, proofUses, axiomDeps -/
 structure NodeBuildData where
   node : Dress.NodeWithPos
   hasSorry : Bool
   statementUses : Array String
   proofUses : Array String
+  axiomDeps : Array String := #[]
 
 /-- Compute fullyProven status for all eligible nodes.
     A node is fullyProven if:
@@ -248,13 +251,107 @@ def computeFullyProven (g : Graph) : Graph := Id.run do
 
   { g with nodes := updatedNodes }
 
+/-- Compute per-node axiom dependencies via graph reachability.
+    For each non-axiom node, walks backward through incoming edges (ancestors)
+    to find all transitively reachable axiom nodes. Sets `axiomDeps` to
+    the display labels of those axiom nodes.
+
+    An axiom node does NOT list itself in its own `axiomDeps`.
+
+    Uses BFS with memoization for O(V+E) complexity. -/
+def computeAxiomDeps (g : Graph) : Graph := Id.run do
+  let adj := g.buildAdjIndex
+
+  -- Build node lookup: id -> Node
+  let mut nodeMap : Std.HashMap String Node := {}
+  for node in g.nodes do
+    nodeMap := nodeMap.insert node.id node
+
+  -- Collect the set of axiom node IDs (use envType, not status, since status
+  -- may be overridden by manual tags or default to notReady)
+  let axiomIds : Std.HashSet String := Id.run do
+    let mut s : Std.HashSet String := {}
+    for node in g.nodes do
+      if node.envType == "axiom" then
+        s := s.insert node.id
+    return s
+
+  -- If no axiom nodes exist, nothing to do
+  if axiomIds.isEmpty then return g
+
+  -- Memoization: nodeId -> set of reachable axiom IDs
+  let mut memo : Std.HashMap String (Std.HashSet String) := {}
+
+  -- For each node, compute its reachable axiom ancestors via iterative DFS
+  for node in g.nodes do
+    if memo.contains node.id then continue
+    -- Use iterative DFS with a post-order stack to propagate results bottom-up
+    let mut stack : Array String := #[node.id]
+    let mut visiting : Std.HashSet String := {}
+    while !stack.isEmpty do
+      let curr := stack.back!
+      if memo.contains curr then
+        stack := stack.pop
+        continue
+      -- Get ancestors: incoming edges to curr give us its dependencies
+      let currDeps := (adj.inEdges curr).map (·.from_)
+      let unresolved := currDeps.filter (fun d => !memo.contains d)
+      if unresolved.isEmpty then
+        -- All ancestors resolved; union their axiom sets
+        let mut axioms : Std.HashSet String := {}
+        -- If curr itself is an axiom, add it (will be excluded for self later)
+        if axiomIds.contains curr then
+          axioms := axioms.insert curr
+        -- Union axiom sets from all ancestors
+        for dep in currDeps do
+          match memo.get? dep with
+          | some depAxioms =>
+            for ax in depAxioms do
+              axioms := axioms.insert ax
+          | none => pure () -- shouldn't happen since unresolved is empty
+        memo := memo.insert curr axioms
+        stack := stack.pop
+      else
+        -- Push unresolved deps, with cycle detection
+        if visiting.contains curr then
+          -- Cycle: use whatever we have so far
+          let mut axioms : Std.HashSet String := {}
+          if axiomIds.contains curr then
+            axioms := axioms.insert curr
+          for dep in currDeps do
+            match memo.get? dep with
+            | some depAxioms =>
+              for ax in depAxioms do
+                axioms := axioms.insert ax
+            | none => pure ()
+          memo := memo.insert curr axioms
+          stack := stack.pop
+        else
+          visiting := visiting.insert curr
+          for dep in unresolved do
+            stack := stack.push dep
+
+  -- Update nodes with their axiom deps (excluding self)
+  let updatedNodes := g.nodes.map fun node =>
+    match memo.get? node.id with
+    | some axioms =>
+      -- Exclude self from own axiomDeps; store node IDs (not display labels)
+      let filtered := axioms.fold (init := #[]) fun acc ax =>
+        if ax == node.id then acc
+        else acc.push ax
+      if filtered.isEmpty then node
+      else { node with axiomDeps := some filtered }
+    | none => node
+
+  { g with nodes := updatedNodes }
+
 /-- Build graph from an array of node build data using two-pass processing.
     PASS 1: Register all labels and create nodes (so all labels exist)
     PASS 2: Add all edges (now back-edges work because targets are registered) -/
 def buildGraph (nodesData : Array NodeBuildData) : Graph :=
   -- PASS 1: Register all labels and create nodes
   let (_, stateAfterNodes) := (nodesData.forM fun data =>
-    registerNode data.node data.hasSorry).run {}
+    registerNode data.node data.hasSorry data.axiomDeps).run {}
   -- PASS 2: Add all edges (now all labels are registered)
   let (_, state) := (nodesData.forM fun data =>
     addNodeEdges data.node data.statementUses data.proofUses).run stateAfterNodes
@@ -275,7 +372,8 @@ def buildGraph (nodesData : Array NodeBuildData) : Graph :=
   -- Return graph without artificial connectivity edges - disconnected components
   -- are now visible and can be detected via findComponents for the Checks feature
   let graph := { nodes := state.nodes, edges := uniqueEdges }
-  computeFullyProven graph  -- Post-process to compute fullyProven
+  let graph := computeFullyProven graph   -- Post-process: proven -> fullyProven
+  computeAxiomDeps graph                  -- Post-process: graph-reachable axiom deps
 
 end Builder
 
@@ -438,7 +536,13 @@ def fromEnvironment (env : Lean.Environment) : Lean.CoreM Graph := do
     | _ => pure ()
     -- Infer uses from actual Lean code dependencies
     let (statementUses, proofUses) ← node.inferUses
-    return Builder.NodeBuildData.mk dressNode (!proofUses.leanOk) statementUses.uses proofUses.uses
+    -- axiomDeps computed post-graph via graph reachability (computeAxiomDeps)
+    return {
+      node := dressNode
+      hasSorry := !proofUses.leanOk
+      statementUses := statementUses.uses
+      proofUses := proofUses.uses
+    }
   return Builder.buildGraph nodesData
 
 /-- Check if a name component indicates an auto-generated declaration -/
@@ -530,7 +634,7 @@ def computeCoverage (env : Lean.Environment) (projectModules : Array Lean.Name)
     and propext. Project axioms are axiom declarations defined within the project's own
     modules. -/
 def collectAxioms (env : Lean.Environment) (projectModules : Array Lean.Name)
-    : AxiomResult := Id.run do
+    (graph : Option Graph := none) : AxiomResult := Id.run do
   let standardNames : Array String := #[
     "propext", "Quot.sound", "Classical.choice"
   ]
@@ -558,6 +662,14 @@ def collectAxioms (env : Lean.Environment) (projectModules : Array Lean.Name)
           }
       | _ => continue
 
-  { standardAxioms := standard, projectAxioms := project }
+  -- Build per-node deps from the graph nodes that have axiomDeps
+  let perNodeDeps := match graph with
+    | some g =>
+      let deps := g.nodes.filterMap fun node =>
+        node.axiomDeps.map fun ds => (node.id, ds)
+      if deps.isEmpty then none else some deps
+    | none => none
+
+  { standardAxioms := standard, projectAxioms := project, perNodeDeps := perNodeDeps }
 
 end Dress.Graph

@@ -66,6 +66,8 @@ structure Node where
   technicalDebt : Option String := none
   /-- Miscellaneous notes -/
   misc : Option String := none
+  /-- Transitive project axiom dependencies of this node's proof -/
+  axiomDeps : Option (Array String) := none
   deriving Repr, Inhabited
 
 /-- Counts of nodes by status -/
@@ -208,7 +210,7 @@ structure UncoveredDecl where
 
 /-- Kind of axiom: standard Lean foundation or project-defined -/
 inductive AxiomKind where
-  /-- Standard Lean foundational axioms (propext, funext, Quot.sound, Classical.choice) -/
+  /-- Standard Lean foundational axioms (propext, Quot.sound, Classical.choice) -/
   | standard
   /-- Project-defined axiom declarations -/
   | project
@@ -257,19 +259,39 @@ structure AxiomResult where
   standardAxioms : Array AxiomDecl
   /-- Project-defined axiom declarations -/
   projectAxioms : Array AxiomDecl
+  /-- Per-node axiom dependency mapping: (nodeId, axiomNames) -/
+  perNodeDeps : Option (Array (String × Array String)) := none
   deriving Repr, Inhabited
 
 instance : ToJson AxiomResult where
-  toJson a := .mkObj [
-    ("standardAxioms", toJson a.standardAxioms),
-    ("projectAxioms", toJson a.projectAxioms)
-  ]
+  toJson a :=
+    let base := [
+      ("standardAxioms", toJson a.standardAxioms),
+      ("projectAxioms", toJson a.projectAxioms)
+    ]
+    let withPerNode := match a.perNodeDeps with
+      | some deps =>
+        let entries := deps.map fun (nodeId, axioms) =>
+          Json.mkObj [("nodeId", Json.str nodeId), ("axioms", toJson axioms)]
+        base ++ [("perNodeDeps", Json.arr entries)]
+      | none => base
+    .mkObj withPerNode
 
 instance : FromJson AxiomResult where
   fromJson? j := do
     let standardAxioms ← j.getObjValAs? (Array AxiomDecl) "standardAxioms"
     let projectAxioms ← j.getObjValAs? (Array AxiomDecl) "projectAxioms"
-    return { standardAxioms, projectAxioms }
+    -- Parse perNodeDeps if present (backward compatible)
+    let perNodeDeps : Option (Array (String × Array String)) :=
+      match j.getObjValAs? (Array Json) "perNodeDeps" with
+      | .ok arr =>
+        let parsed := arr.filterMap fun entry => do
+          let nodeId ← (entry.getObjValAs? String "nodeId").toOption
+          let axioms ← (entry.getObjValAs? (Array String) "axioms").toOption
+          return (nodeId, axioms)
+        if parsed.isEmpty then none else some parsed
+      | .error _ => none
+    return { standardAxioms, projectAxioms, perNodeDeps }
 
 /-- Blueprint coverage results for a project -/
 structure CoverageResult where

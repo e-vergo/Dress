@@ -76,7 +76,8 @@ instance : ToJson Node where
     ("blocked", toJson n.blocked),
     ("potentialIssue", toJson n.potentialIssue),
     ("technicalDebt", toJson n.technicalDebt),
-    ("misc", toJson n.misc)
+    ("misc", toJson n.misc),
+    ("axiomDeps", toJson n.axiomDeps)
   ]
 
 /-- JSON instance for Edge -/
@@ -172,6 +173,7 @@ instance : ToJson LayoutNode where
     ("potentialIssue", toJson ln.node.potentialIssue),
     ("technicalDebt", toJson ln.node.technicalDebt),
     ("misc", toJson ln.node.misc),
+    ("axiomDeps", toJson ln.node.axiomDeps),
     ("x", toJson ln.x),
     ("y", toJson ln.y),
     ("width", toJson ln.width),
