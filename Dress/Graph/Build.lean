@@ -210,6 +210,12 @@ def computeFullyProven (g : Graph) : Graph := Id.run do
         if !isComplete currNode.status then
           memo := memo.insert curr false
           stack := stack.pop
+        else if currNode.status == .axiom then
+          -- Axiom nodes are leaf nodes for fullyProven computation.
+          -- Their LaTeX \uses{} edges are for documentation context, not proof dependencies.
+          -- A proven node depending on an axiom should still be fullyProven-eligible.
+          memo := memo.insert curr true
+          stack := stack.pop
         else
           -- Get dependencies via AdjIndex: incoming edges to `curr` give us its ancestors
           -- Edge semantics: (from_=A, to=B) means B depends on A
@@ -517,5 +523,41 @@ def computeCoverage (env : Lean.Environment) (projectModules : Array Lean.Name)
     else (coveredDeclarations.toFloat / totalDeclarations.toFloat) * 100.0
 
   { totalDeclarations, coveredDeclarations, coveragePercent, uncovered }
+
+/-- Collect axiom declarations from the environment, classified as standard or project-specific.
+    Standard axioms are the well-known Lean foundational axioms (propext, Quot.sound,
+    Classical.choice). Note: funext is not an axiom in Lean 4 — it's proven from Quot.sound
+    and propext. Project axioms are axiom declarations defined within the project's own
+    modules. -/
+def collectAxioms (env : Lean.Environment) (projectModules : Array Lean.Name)
+    : AxiomResult := Id.run do
+  let standardNames : Array String := #[
+    "propext", "Quot.sound", "Classical.choice"
+  ]
+  let mut standard : Array AxiomDecl := #[]
+  let mut project : Array AxiomDecl := #[]
+  let mut seen : Std.HashSet String := {}
+
+  for h : idx in [:env.header.moduleData.size] do
+    let moduleData := env.header.moduleData[idx]
+    let modName := env.header.moduleNames[idx]!
+    for name in moduleData.constNames do
+      let nameStr := name.toString
+      if seen.contains nameStr then continue
+      let some ci := env.find? name | continue
+      match ci with
+      | .axiomInfo _ =>
+        seen := seen.insert nameStr
+        if standardNames.contains nameStr then
+          standard := standard.push {
+            name := nameStr, moduleName := modName.toString, kind := .standard
+          }
+        else if isProjectModule modName projectModules then
+          project := project.push {
+            name := nameStr, moduleName := modName.toString, kind := .project
+          }
+      | _ => continue
+
+  { standardAxioms := standard, projectAxioms := project }
 
 end Dress.Graph

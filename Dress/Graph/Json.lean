@@ -119,7 +119,8 @@ instance : ToJson CheckResults where
     ("cycles", toJson c.cycles),
     ("kernelVerified", toJson c.kernelVerified),
     ("soundnessResults", toJson c.soundnessResults),
-    ("coverage", toJson c.coverage)
+    ("coverage", toJson c.coverage),
+    ("axiomTracking", toJson c.axiomTracking)
   ]
 
 /-- FromJson instance for CheckResults (backward compatible with legacy manifests) -/
@@ -142,9 +143,13 @@ instance : FromJson CheckResults where
       match j.getObjValAs? CoverageResult "coverage" with
       | .ok v => some v
       | .error _ => none
+    let axiomTracking : Option AxiomResult :=
+      match j.getObjValAs? AxiomResult "axiomTracking" with
+      | .ok v => some v
+      | .error _ => none
     return {
       isConnected, numComponents, componentSizes, cycles,
-      kernelVerified, soundnessResults, coverage
+      kernelVerified, soundnessResults, coverage, axiomTracking
     }
 
 namespace Layout

@@ -206,6 +206,71 @@ structure UncoveredDecl where
   kind : String
   deriving Repr, Inhabited, ToJson, FromJson
 
+/-- Kind of axiom: standard Lean foundation or project-defined -/
+inductive AxiomKind where
+  /-- Standard Lean foundational axioms (propext, funext, Quot.sound, Classical.choice) -/
+  | standard
+  /-- Project-defined axiom declarations -/
+  | project
+  deriving Repr, Inhabited, BEq
+
+instance : ToJson AxiomKind where
+  toJson
+    | .standard => "standard"
+    | .project => "project"
+
+instance : FromJson AxiomKind where
+  fromJson? j := do
+    let s ← j.getStr?
+    match s with
+    | "standard" => return .standard
+    | "project" => return .project
+    | _ => throw s!"unknown AxiomKind: {s}"
+
+/-- An axiom declaration with its classification -/
+structure AxiomDecl where
+  /-- Fully qualified name -/
+  name : String
+  /-- Module the axiom belongs to -/
+  moduleName : String
+  /-- Classification: standard or project -/
+  kind : AxiomKind
+  deriving Repr, Inhabited
+
+instance : ToJson AxiomDecl where
+  toJson a := .mkObj [
+    ("name", .str a.name),
+    ("moduleName", .str a.moduleName),
+    ("kind", toJson a.kind)
+  ]
+
+instance : FromJson AxiomDecl where
+  fromJson? j := do
+    let name ← j.getObjValAs? String "name"
+    let moduleName ← j.getObjValAs? String "moduleName"
+    let kind ← j.getObjValAs? AxiomKind "kind"
+    return { name, moduleName, kind }
+
+/-- Axiom tracking results for a project -/
+structure AxiomResult where
+  /-- Standard Lean foundational axioms used -/
+  standardAxioms : Array AxiomDecl
+  /-- Project-defined axiom declarations -/
+  projectAxioms : Array AxiomDecl
+  deriving Repr, Inhabited
+
+instance : ToJson AxiomResult where
+  toJson a := .mkObj [
+    ("standardAxioms", toJson a.standardAxioms),
+    ("projectAxioms", toJson a.projectAxioms)
+  ]
+
+instance : FromJson AxiomResult where
+  fromJson? j := do
+    let standardAxioms ← j.getObjValAs? (Array AxiomDecl) "standardAxioms"
+    let projectAxioms ← j.getObjValAs? (Array AxiomDecl) "projectAxioms"
+    return { standardAxioms, projectAxioms }
+
 /-- Blueprint coverage results for a project -/
 structure CoverageResult where
   /-- Total number of eligible project-local declarations -/
@@ -234,6 +299,8 @@ structure CheckResults where
   soundnessResults : Array SoundnessResult := #[]
   /-- Blueprint coverage results (what percentage of declarations have @[blueprint]) -/
   coverage : Option CoverageResult := none
+  /-- Axiom tracking results (standard vs project-defined axioms) -/
+  axiomTracking : Option AxiomResult := none
   deriving Repr, Inhabited
 
 /-- Compute transitive reduction of the graph.

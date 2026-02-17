@@ -20,13 +20,14 @@ open Lean Cli Dress
     This provides all the dashboard metadata in a single file. -/
 def buildEnhancedManifest (graph : Graph.Graph)
     (soundnessResults : Array Graph.SoundnessResult := #[])
-    (coverage : Option Graph.CoverageResult := none) : Json :=
+    (coverage : Option Graph.CoverageResult := none)
+    (axiomTracking : Option Graph.AxiomResult := none) : Json :=
   -- Compute status counts
   let stats := graph.computeStatusCounts
 
   -- Compute check results (connectivity, cycles, kernel verification)
   let checks := Graph.computeCheckResults graph
-  let checks := { checks with soundnessResults := soundnessResults, coverage := coverage }
+  let checks := { checks with soundnessResults := soundnessResults, coverage := coverage, axiomTracking := axiomTracking }
 
   -- Extract key declarations
   let keyDeclarations := graph.nodes.filter (·.keyDeclaration) |>.map (·.id)
@@ -234,9 +235,12 @@ def runGraphCmd (p : Parsed) : IO UInt32 := do
     -- Compute blueprint coverage for project-local declarations
     let coverage := Graph.computeCoverage (← getEnv) modules
 
+    -- Collect axiom tracking data
+    let axiomTracking := Graph.collectAxioms (← getEnv) modules
+
     -- Write enhanced manifest with stats and dashboard metadata
     let manifestPath := dressedDir / "manifest.json"
-    let manifestJson := buildEnhancedManifest reducedGraph soundnessResults (some coverage)
+    let manifestJson := buildEnhancedManifest reducedGraph soundnessResults (some coverage) (some axiomTracking)
     IO.FS.writeFile manifestPath manifestJson.pretty
 
     -- Compute per-node max depths for dynamic depth range
