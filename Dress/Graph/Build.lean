@@ -623,7 +623,11 @@ def computeCoverage (env : Lean.Environment) (projectModules : Array Lean.Name)
         continue
 
       let isCovered := (Architect.blueprintExt.find? env name).isSome
-      let line := ranges.selectionRange.pos.line
+      -- Use range.pos.line (full declaration start, including attributes) rather than
+      -- selectionRange.pos.line (name position). Auto-generated declarations from
+      -- @[simps], @[to_additive], etc. share the same range start as their parent
+      -- even when their selectionRange (name) differs.
+      let line := ranges.range.pos.line
       let key := (modName.toString, line)
       let decl : UncoveredDecl := {
         name := name.toString
