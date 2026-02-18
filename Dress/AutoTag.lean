@@ -202,27 +202,23 @@ def resolveInsertion (env : Environment) (name : Name) (kind : String) (moduleNa
   -- but we must generate the attribute form matching the source keyword.
   let actualKind := actualKeyword.getD kind
 
-  -- Pre-scan: check keyword line and a window above for existing @[blueprint].
-  -- This catches multi-line @[blueprint (statement ...) (proof ...)] blocks
-  -- where continuation lines like `(statement := ...)` break the attribute-line walk.
-  let scanFrom := if keywordLine >= 5 then keywordLine - 5 else 0
-  for idx in [scanFrom:keywordLine + 1] do
+  -- Use DeclarationRanges.range.pos.line to find the full declaration start,
+  -- which includes modifiers (noncomputable, private, etc.) and attributes
+  -- (@[simp], @[to_additive /-- doc -/], etc.). This replaces the backward walk
+  -- which broke on multi-line attribute blocks and didn't walk past modifiers.
+  let rangeStart := ranges.range.pos.line - 1  -- 1-based → 0-based
+  let rangeStart := if rangeStart < keywordLine then rangeStart else keywordLine
+
+  -- Pre-scan: check for existing @[blueprint] in the declaration range
+  for idx in [rangeStart:keywordLine + 1] do
     if hasBlueprintAttr lines[idx]! then
       return none
 
-  -- Walk backward from keyword line to find existing attribute lines.
-  -- Track the closest attribute line (right above the keyword).
+  -- Scan forward from rangeStart to keywordLine to find attribute lines for injection
   let mut closestAttrLine : Option Nat := none
-  let mut insertionLine := keywordLine
-  let mut checkLine := keywordLine
-  while checkLine > 0 do
-    checkLine := checkLine - 1
-    if isAttributeLine lines[checkLine]! then
-      if closestAttrLine.isNone then
-        closestAttrLine := some checkLine
-      insertionLine := checkLine
-    else
-      break
+  for idx in [rangeStart:keywordLine] do
+    if isAttributeLine lines[idx]! then
+      closestAttrLine := some idx  -- Last found = closest to keyword
 
   -- Determine indentation from the keyword line
   let indent := getIndentation lines[keywordLine]!
@@ -262,7 +258,7 @@ def resolveInsertion (env : Environment) (name : Name) (kind : String) (moduleNa
   let attrLines := mkAttributeLines actualKind |>.map (indent ++ ·)
   return some {
     filePath
-    insertLine := insertionLine
+    insertLine := rangeStart
     textLines := attrLines
     declName := name.toString
     kind := actualKind
