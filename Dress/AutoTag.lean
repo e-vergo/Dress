@@ -34,6 +34,10 @@ structure TagInsertion where
   moduleName : String
   /-- If true, replace the line at `insertLine` instead of inserting before it -/
   replaceMode : Bool := false
+  /-- 0-indexed keyword line (theorem/def/etc.) used for dedup.
+      Two declarations resolving to the same keyword line (e.g., a Prop-valued class
+      and its auto-generated instance) should produce only one insertion. -/
+  keywordLine : Nat := 0
   deriving Repr
 
 /-- Determine the `@[blueprint ...]` attribute text based on declaration kind.
@@ -220,6 +224,33 @@ def resolveInsertion (env : Environment) (name : Name) (kind : String) (moduleNa
     if isAttributeLine lines[idx]! then
       closestAttrLine := some idx  -- Last found = closest to keyword
 
+  -- Fallback: backward scan from keyword when forward scan found nothing.
+  -- Handles cases where range.pos.line doesn't reach multi-line attribute blocks
+  -- (e.g., @[to_additive\n/-- doc -/] where range starts at the keyword line).
+  if closestAttrLine.isNone then
+    let mut checkIdx := keywordLine
+    while checkIdx > 0 do
+      checkIdx := checkIdx - 1
+      let trimmed := lines[checkIdx]!.trimAsciiStart.toString
+      if isAttributeLine lines[checkIdx]! then
+        closestAttrLine := some checkIdx
+        break
+      -- Stop scanning at blank lines
+      if trimmed == "" then break
+      -- Continue past doc comments (/-- ... -/), closing brackets (]-only lines),
+      -- attribute content lines (inside multi-line @[...]), and attribute parameter
+      -- lines like `(statement := /--  -/)` inside multi-line @[blueprint ...] blocks
+      unless trimmed.startsWith "/--" || trimmed.startsWith "--" ||
+             trimmed.endsWith "-/" || trimmed.endsWith "-/]" ||
+             trimmed.startsWith "#" || trimmed.startsWith "(" do
+        break
+    -- Also check backward-found attr range for existing @[blueprint]
+    if let some attrLine := closestAttrLine then
+      if attrLine < rangeStart then
+        for idx in [attrLine:rangeStart] do
+          if hasBlueprintAttr lines[idx]! then
+            return none
+
   -- Determine indentation from the keyword line
   let indent := getIndentation lines[keywordLine]!
 
@@ -241,6 +272,7 @@ def resolveInsertion (env : Environment) (name : Name) (kind : String) (moduleNa
       kind := actualKind
       moduleName
       replaceMode := true
+      keywordLine
     }
   if let some attrLine := closestAttrLine then
     let modifiedLine := injectBlueprintIntoAttrLine lines[attrLine]!
@@ -252,17 +284,31 @@ def resolveInsertion (env : Environment) (name : Name) (kind : String) (moduleNa
       kind := actualKind
       moduleName
       replaceMode := true
+      keywordLine
     }
 
   -- No existing attributes: insert new @[blueprint] line(s)
+  -- Skip past any doc comment at rangeStart — Lean 4 requires doc comments
+  -- BEFORE attributes, so inserting @[blueprint] before a /-- doc -/ is invalid.
+  let mut insertPoint := rangeStart
+  if insertPoint < keywordLine then
+    let trimmedStart := lines[insertPoint]!.trimAsciiStart.toString
+    if trimmedStart.startsWith "/--" then
+      -- Multi-line doc comment: scan forward to find the closing -/
+      while insertPoint < keywordLine do
+        if (lines[insertPoint]!.splitOn "-/").length > 1 then
+          insertPoint := insertPoint + 1  -- move past the closing line
+          break
+        insertPoint := insertPoint + 1
   let attrLines := mkAttributeLines actualKind |>.map (indent ++ ·)
   return some {
     filePath
-    insertLine := rangeStart
+    insertLine := insertPoint
     textLines := attrLines
     declName := name.toString
     kind := actualKind
     moduleName
+    keywordLine
   }
 
 /-- Apply a batch of insertions to a single file. Insertions must all target
@@ -357,16 +403,17 @@ def runAutoTag (env : Environment) (modules : Array Name) (dryRun : Bool)
 
   IO.eprintln s!"  Resolved {insertions.size} insertion points"
 
-  -- Deduplicate insertions that target the exact same (file, line).
+  -- Deduplicate insertions that target the same (file, keywordLine).
   -- Auto-generated declarations (from @[simps], @[to_additive], structure projections,
-  -- etc.) may resolve to the same source position.
-  -- Only one @[blueprint] should be emitted per insertion site.
-  -- We keep the first seen; since `actualKind` now reflects the source keyword,
-  -- all insertions at the same line will produce the same attribute form.
+  -- Prop-valued class instances, etc.) may resolve to the same source declaration.
+  -- Only one @[blueprint] should be emitted per declaration keyword line.
+  -- We key on keywordLine (not insertLine) because two declarations sharing the same
+  -- keyword line may have different insertLine values (e.g., a Prop-valued class and
+  -- its auto-generated instance have different range.pos.line values).
   let mut deduped : Std.HashMap (String × Nat) TagInsertion := {}
   let mut skippedCount : Nat := 0
   for ins in insertions do
-    let key := (ins.filePath.toString, ins.insertLine)
+    let key := (ins.filePath.toString, ins.keywordLine)
     match deduped[key]? with
     | some _ =>
       skippedCount := skippedCount + 1
