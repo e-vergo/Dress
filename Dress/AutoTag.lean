@@ -197,6 +197,19 @@ def resolveInsertion (env : Environment) (name : Name) (kind : String) (moduleNa
   | none =>
     return none  -- Can't identify keyword — skip to be safe
 
+  -- Use the actual source keyword rather than the environment-level kind.
+  -- E.g., an `instance` may be classified as "theorem" in the environment,
+  -- but we must generate the attribute form matching the source keyword.
+  let actualKind := actualKeyword.getD kind
+
+  -- Pre-scan: check keyword line and a window above for existing @[blueprint].
+  -- This catches multi-line @[blueprint (statement ...) (proof ...)] blocks
+  -- where continuation lines like `(statement := ...)` break the attribute-line walk.
+  let scanFrom := if keywordLine >= 5 then keywordLine - 5 else 0
+  for idx in [scanFrom:keywordLine + 1] do
+    if hasBlueprintAttr lines[idx]! then
+      return none
+
   -- Walk backward from keyword line to find existing attribute lines.
   -- Track the closest attribute line (right above the keyword).
   let mut closestAttrLine : Option Nat := none
@@ -205,10 +218,6 @@ def resolveInsertion (env : Environment) (name : Name) (kind : String) (moduleNa
   while checkLine > 0 do
     checkLine := checkLine - 1
     if isAttributeLine lines[checkLine]! then
-      -- Guard: if this attribute is already a @[blueprint], skip this declaration
-      if hasBlueprintAttr lines[checkLine]! then
-        IO.eprintln s!"  Warning: Declaration {name} already has @[blueprint] nearby, skipping"
-        return none
       if closestAttrLine.isNone then
         closestAttrLine := some checkLine
       insertionLine := checkLine
@@ -233,7 +242,7 @@ def resolveInsertion (env : Environment) (name : Name) (kind : String) (moduleNa
       insertLine := keywordLine
       textLines := #[modifiedLine]
       declName := name.toString
-      kind
+      kind := actualKind
       moduleName
       replaceMode := true
     }
@@ -244,19 +253,19 @@ def resolveInsertion (env : Environment) (name : Name) (kind : String) (moduleNa
       insertLine := attrLine
       textLines := #[modifiedLine]
       declName := name.toString
-      kind
+      kind := actualKind
       moduleName
       replaceMode := true
     }
 
   -- No existing attributes: insert new @[blueprint] line(s)
-  let attrLines := mkAttributeLines kind |>.map (indent ++ ·)
+  let attrLines := mkAttributeLines actualKind |>.map (indent ++ ·)
   return some {
     filePath
     insertLine := insertionLine
     textLines := attrLines
     declName := name.toString
-    kind
+    kind := actualKind
     moduleName
   }
 
@@ -286,6 +295,39 @@ def applyInsertions (path : System.FilePath) (insertions : Array TagInsertion) :
   let output := String.intercalate "\n" lines.toList
   IO.FS.writeFile path output
 
+/-- Compute the set of module names that transitively import Dress or LeanArchitect,
+    and therefore have access to `@[blueprint]`. Uses BFS over the reverse dependency graph. -/
+private def blueprintCapableModules (env : Environment) : Std.HashMap String Unit := Id.run do
+  let moduleNames := env.header.moduleNames
+  let moduleData := env.header.moduleData
+  -- Build reverse dependency map: imported module → modules that import it
+  let mut reverseDeps : Std.HashMap String (Array String) := {}
+  for idx in [:moduleData.size] do
+    let modName := moduleNames[idx]!.toString
+    for imp in moduleData[idx]!.imports do
+      let impName := imp.module.toString
+      let existing := reverseDeps.getD impName #[]
+      reverseDeps := reverseDeps.insert impName (existing.push modName)
+  -- Seed: modules providing @[blueprint]
+  let mut capable : Std.HashMap String Unit := {}
+  let mut queue : Array String := #[]
+  for idx in [:moduleNames.size] do
+    let name := moduleNames[idx]!.toString
+    if name.startsWith "Dress" || name.startsWith "LeanArchitect" || name.startsWith "Architect" then
+      capable := capable.insert name ()
+      queue := queue.push name
+  -- BFS: any module importing a capable module becomes capable
+  let mut qi : Nat := 0
+  while qi < queue.size do
+    let current := queue[qi]!
+    qi := qi + 1
+    if let some deps := reverseDeps[current]? then
+      for dep in deps do
+        unless capable.contains dep do
+          capable := capable.insert dep ()
+          queue := queue.push dep
+  capable
+
 /-- Main entry point: discover uncovered declarations and compute insertions.
 
     Uses `Graph.computeCoverage` to find all declarations lacking `@[blueprint]`
@@ -297,6 +339,11 @@ def runAutoTag (env : Environment) (modules : Array Name) (dryRun : Bool)
   -- Use existing coverage computation to find uncovered declarations
   let coverage ← Graph.computeCoverage env modules
 
+  -- Compute which modules transitively import Dress/LeanArchitect.
+  -- Declarations from non-capable modules (e.g., Mathlib patches) are skipped
+  -- since @[blueprint] would be an unknown attribute in those files.
+  let capableModules := blueprintCapableModules env
+
   IO.eprintln s!"  Found {coverage.uncovered.size} uncovered declarations (of {coverage.totalDeclarations} total, {coverage.coveredDeclarations} already covered)"
 
   -- Resolve insertion points for each uncovered declaration
@@ -305,6 +352,9 @@ def runAutoTag (env : Environment) (modules : Array Name) (dryRun : Bool)
     -- Skip non-taggable declaration kinds at the environment level.
     -- other: notation, macro, and other non-standard declarations
     if uncov.kind == "other" then continue
+    -- Skip declarations from modules that don't transitively import Dress/LeanArchitect.
+    -- These files (e.g., Mathlib patches) don't have @[blueprint] in scope.
+    unless capableModules.contains uncov.moduleName do continue
     let name := uncov.name.toName
     if let some ins ← resolveInsertion env name uncov.kind uncov.moduleName then
       insertions := insertions.push ins
@@ -315,18 +365,16 @@ def runAutoTag (env : Environment) (modules : Array Name) (dryRun : Bool)
   -- Auto-generated declarations (from @[simps], @[to_additive], structure projections,
   -- etc.) may resolve to the same source position.
   -- Only one @[blueprint] should be emitted per insertion site.
-  -- When merging we prefer the theorem/lemma form (with statement+proof placeholders).
+  -- We keep the first seen; since `actualKind` now reflects the source keyword,
+  -- all insertions at the same line will produce the same attribute form.
   let mut deduped : Std.HashMap (String × Nat) TagInsertion := {}
   let mut skippedCount : Nat := 0
   for ins in insertions do
     let key := (ins.filePath.toString, ins.insertLine)
     match deduped[key]? with
-    | some existing =>
+    | some _ =>
       skippedCount := skippedCount + 1
-      let insIsThm := ins.kind == "theorem" || ins.kind == "lemma"
-      let existIsThm := existing.kind == "theorem" || existing.kind == "lemma"
-      if insIsThm && !existIsThm then
-        deduped := deduped.insert key ins
+      -- Keep first seen; all insertions at same source line share the same keyword
     | none =>
       deduped := deduped.insert key ins
   insertions := deduped.values.toArray
