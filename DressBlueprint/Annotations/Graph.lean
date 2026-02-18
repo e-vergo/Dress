@@ -40,7 +40,7 @@ attribute [blueprint "dr:graph-node"
   \item Unique string identifier (the LaTeX label)
   \item Display label (title or qualified Lean name)
   \item Environment type (theorem, def, axiom, etc.)
-  \item \texttt{NodeStatus} from the 6-status color model
+  \item \texttt{NodeStatus} from the 7-status color model
   \item Shape for SVG rendering
   \item URL for HTML navigation
   \item Source module name
@@ -54,7 +54,7 @@ attribute [blueprint "dr:graph-node"
 attribute [blueprint "dr:status-counts"
   (title := "Status Counts")
   (statement := /-- Aggregate counts of nodes by their \texttt{NodeStatus} value.
-  Tracks all 6 status categories plus total node count and axiom count.
+  Tracks all 7 status categories plus total node count.
   Used for dashboard statistics display. -/)
   (proof := /-- Structure with 8 \texttt{Nat} fields, all defaulting to 0.
   Derives \texttt{ToJson} and \texttt{FromJson} for manifest serialization. -/)]
@@ -279,7 +279,7 @@ attribute [blueprint "dr:builder-get-status"
   (statement := /-- Computes the final visualization status for a node based on:
   \begin{enumerate}
   \item Manual \texttt{mathlibReady} flag (highest priority)
-  \item Manual \texttt{ready} flag
+  \item Manual \texttt{wip} flag
   \item Explicit \texttt{notReady} flag (overrides auto-derive)
   \item If has Lean code without \texttt{sorryAx} $\to$ \texttt{proven}
   \item If has Lean code with \texttt{sorryAx} $\to$ \texttt{sorry}
@@ -545,15 +545,15 @@ SVG rendering of laid-out dependency graphs. Contains the canonical status color
 attribute [blueprint "dr:svg-config"
   (title := "SVG Configuration")
   (statement := /-- Configuration structure for SVG rendering. Defines the canonical
-  status colors for the 6-status color model:
+  status colors for the 7-status color model:
   \begin{itemize}
   \item \texttt{notReady}: Vivid orange (\texttt{\#E8820C})
-  \item \texttt{ready}: Deep teal/cyan (\texttt{\#0097A7})
+  \item \texttt{wip}: Deep teal/cyan (\texttt{\#0097A7})
   \item \texttt{sorry}: Vivid red (\texttt{\#C62828})
   \item \texttt{proven}: Medium green (\texttt{\#66BB6A})
   \item \texttt{fullyProven}: Deep forest green (\texttt{\#1B5E20})
+  \item \texttt{axiom}: Vivid purple (\texttt{\#7E57C2})
   \item \texttt{mathlibReady}: Vivid blue (\texttt{\#42A5F5})
-  \item Axiom override: Vivid purple (\texttt{\#7E57C2})
   \end{itemize}
   Also configures stroke, edge, font, and border radius properties.
   This is the \textbf{source of truth} for status colors---CSS must match. -/)
@@ -566,7 +566,7 @@ attribute [blueprint "dr:svg-get-status-color"
   (statement := /-- Maps a \texttt{NodeStatus} to its hex color string from the
   \texttt{SvgConfig}. This function is the primary color dispatch
   used during SVG node rendering. -/)
-  (proof := /-- Pattern match on all 6 \texttt{NodeStatus} variants,
+  (proof := /-- Pattern match on all 7 \texttt{NodeStatus} variants,
   returning the corresponding config color field. -/)
   (uses := ["dr:svg-config"])]
   Dress.Graph.Svg.getStatusColor
@@ -575,7 +575,7 @@ attribute [blueprint "dr:svg-get-text-color"
   (title := "Text Color Lookup")
   (statement := /-- Determines text color based on node status. Returns white
   (\texttt{\#ffffff}) for dark backgrounds (\texttt{sorry}, \texttt{fullyProven},
-  \texttt{ready}) and the default text color for light backgrounds. -/)
+  \texttt{wip}) and the default text color for light backgrounds. -/)
   (proof := /-- Pattern match on status variants with conditional white override. -/)
   (uses := ["dr:svg-config"])]
   Dress.Graph.Svg.getTextColor
@@ -593,7 +593,7 @@ attribute [blueprint "dr:svg-status-css-class"
   (statement := /-- Maps a \texttt{NodeStatus} to a CSS class name for dark mode targeting.
   Classes follow the pattern \texttt{status-not-ready}, \texttt{status-proven}, etc.
   These classes are used in SVG \texttt{<g>} elements for theme-aware styling. -/)
-  (proof := /-- Pattern match on all 6 variants returning string constants. -/)]
+  (proof := /-- Pattern match on all 7 variants returning string constants. -/)]
   Dress.Graph.Svg.statusCssClass
 
 attribute [blueprint "dr:svg-render-node"
@@ -650,7 +650,7 @@ attribute [blueprint "dr:svg-render-defs"
 attribute [blueprint "dr:svg-render-legend"
   (title := "Render SVG Legend")
   (statement := /-- Generates an SVG legend group showing all 7 status colors
-  (6 statuses plus axiom) and 3 shape types (ellipse, box, diamond).
+  and 3 shape types (ellipse, box, diamond).
   Positioned at top-left with a white background box. Currently
   disabled in favor of static HTML legend outside the SVG viewport. -/)
   (proof := /-- Builds SVG \texttt{<g>} with background rect, color swatches,

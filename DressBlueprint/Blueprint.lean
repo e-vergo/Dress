@@ -227,7 +227,7 @@ handling the axis inversion and scaling:
 
 ## Status Colors
 
-The canonical hex color values for the six-status model, serving as
+The canonical hex color values for the seven-status model, serving as
 the single source of truth that CSS must match:
 
 :::leanNode "dr:svg-get-status-color"

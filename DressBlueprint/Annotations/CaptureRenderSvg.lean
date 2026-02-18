@@ -525,7 +525,7 @@ attribute [blueprint "dr:status-to-color"
   (title := "Status to Color Hex")
   (statement := /--
     Maps each \texttt{NodeStatus} to its canonical color hex code.
-    These are the 6-status color model values used in the side-by-side
+    These are the 7-status color model values used in the side-by-side
     heading status dots.
   -/)
   (proof := /--
@@ -575,7 +575,7 @@ attribute [blueprint "dr:status-to-badge-class"
   -/)
   (proof := /--
     Pattern match grouping proven/fullyProven/mathlibReady as verified,
-    sorry/ready as in-progress, notReady as not-started.
+    sorry/wip as in-progress, notReady as not-started.
   -/)]
   Dress.Render.statusToBadgeClass
 

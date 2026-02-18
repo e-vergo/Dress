@@ -596,7 +596,7 @@ edge lists for $O(1)$ lookup:
 
 \section{Status Tracking}
 
-The six-status color model tracks the formalization progress of each node:
+The seven-status color model tracks the formalization progress of each node:
 
 \inputleannode{dr:status-counts}
 
@@ -604,14 +604,15 @@ The six-status color model tracks the formalization progress of each node:
 
 The status values and their semantics are:
 \begin{itemize}
-\item \texttt{notReady} (sandy brown): The declaration has no Lean code or is
+\item \texttt{notReady} (vivid orange, \texttt{\#E8820C}): The declaration has no Lean code or is
   explicitly marked as not ready.
-\item \texttt{ready} (teal): Manually marked as ready for formalization.
-\item \texttt{sorry} (red): The proof exists but contains \texttt{sorryAx}.
-\item \texttt{proven} (light green): Complete proof without sorry.
-\item \texttt{fullyProven} (deep forest green): Proven, and all transitive
+\item \texttt{wip} (teal, \texttt{\#0097A7}): Manually marked as work-in-progress.
+\item \texttt{sorry} (red, \texttt{\#C62828}): The proof exists but contains \texttt{sorryAx}.
+\item \texttt{proven} (light green, \texttt{\#66BB6A}): Complete proof without sorry.
+\item \texttt{fullyProven} (deep forest green, \texttt{\#1B5E20}): Proven, and all transitive
   dependencies are also proven. Computed post-graph-construction.
-\item \texttt{mathlibReady} (blue): Manually marked as ready for upstream
+\item \texttt{axiom} (purple, \texttt{\#7E57C2}): Intentionally unproven axiom.
+\item \texttt{mathlibReady} (blue, \texttt{\#42A5F5}): Manually marked as ready for upstream
   contribution to mathlib.
 \end{itemize}
 
@@ -681,7 +682,7 @@ annotations and automatically derived statuses:
 
 \inputleannode{dr:builder-get-status}
 
-The priority order is: \texttt{mathlibReady} $>$ \texttt{ready} $>$
+The priority order is: \texttt{mathlibReady} $>$ \texttt{wip} $>$
 explicit \texttt{notReady} $>$ auto-derived (\texttt{proven} if Lean code
 exists without sorry, \texttt{sorry} if sorry is present, \texttt{notReady}
 otherwise). The \texttt{fullyProven} status is not assigned here---it is
@@ -1180,7 +1181,7 @@ $y_{\text{svg}} = \text{padding} + (y_{\max} - y) / (y_{\max} - y_{\min})
 % =============================================================================
 
 The \texttt{Dress.Graph.Svg} module translates the positioned
-\texttt{LayoutGraph} into SVG output. This is where the six-status color
+\texttt{LayoutGraph} into SVG output. This is where the seven-status color
 model is defined---these hex values are the canonical source of truth for
 status colors across the entire SBS toolchain.
 
@@ -1201,10 +1202,10 @@ purple color that overrides the status-based coloring.
 \inputleannode{dr:svg-status-css-class}
 
 The color assignments encode formalization progress at a glance:
-vivid orange for unstarted, deep teal for ready, vivid red for sorry,
+vivid orange for unstarted, deep teal for wip, vivid red for sorry,
 medium green for proven, deep forest green for fully proven, and
 vivid blue for mathlib-ready. Text color is white for dark backgrounds
-(sorry, fully proven, ready) and dark gray otherwise.
+(sorry, fully proven, wip) and dark gray otherwise.
 
 \section{Node Rendering}
 
@@ -1304,9 +1305,9 @@ Two rendering variants exist:
 \inputleannode{dr:render-verification-badge}
 
 Verification badges provide a user-friendly summary of formalization status
-for the paper variant, collapsing the six-status model into three categories:
+for the paper variant, collapsing the seven-status model into three categories:
 ``Verified'' (proven, fully proven, mathlib ready), ``In Progress'' (sorry,
-ready), and ``Not Started'' (not ready).
+wip), and ``Not Started'' (not ready).
 
 \section{Grid Cells}
 
@@ -1507,7 +1508,7 @@ rather than using string templates. This was motivated by several factors:
 
 \section{Status Color Model}
 
-The six-status color model (Chapter~\ref{ch:graph-svg}) was designed to
+The seven-status color model (Chapter~\ref{ch:graph-svg}) was designed to
 encode formalization progress at a glance while remaining accessible:
 
 \begin{itemize}
