@@ -211,7 +211,7 @@ def runGraphCmd (p : Parsed) : IO UInt32 := do
         pure #[]
 
     -- Compute blueprint coverage for project-local declarations
-    let coverage := Graph.computeCoverage (← getEnv) modules
+    let coverage ← Graph.computeCoverage (← getEnv) modules
 
     -- Collect axiom tracking data
     let axiomTracking := Graph.collectAxioms (← getEnv) modules (some reducedGraph)

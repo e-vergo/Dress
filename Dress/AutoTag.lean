@@ -97,11 +97,10 @@ private def isKeywordLine (line : String) : Bool :=
     declKeywords.any (fun kw => stripped.startsWith kw)
 
 /-- Keywords that `@[blueprint]` can validly decorate.
-    Excludes `instance` (requires priority, not attribute options),
-    `notation`/`macro` (not declaration-level), and `opaque`. -/
+    Excludes `notation`/`macro` (not declaration-level). -/
 private def taggableKeywords : Array String :=
   #["theorem", "def", "lemma", "structure", "class",
-    "abbrev", "inductive", "axiom"]
+    "abbrev", "inductive", "axiom", "instance", "opaque"]
 
 /-- Extract the declaration keyword from a source line, stripping prefixes and inline attributes.
     Returns `none` if no known keyword is found. -/
@@ -296,7 +295,7 @@ def applyInsertions (path : System.FilePath) (insertions : Array TagInsertion) :
 def runAutoTag (env : Environment) (modules : Array Name) (dryRun : Bool)
     : CoreM (Array TagInsertion) := do
   -- Use existing coverage computation to find uncovered declarations
-  let coverage := Graph.computeCoverage env modules
+  let coverage ← Graph.computeCoverage env modules
 
   IO.eprintln s!"  Found {coverage.uncovered.size} uncovered declarations (of {coverage.totalDeclarations} total, {coverage.coveredDeclarations} already covered)"
 
@@ -304,9 +303,8 @@ def runAutoTag (env : Environment) (modules : Array Name) (dryRun : Bool)
   let mut insertions : Array TagInsertion := #[]
   for uncov in coverage.uncovered do
     -- Skip non-taggable declaration kinds at the environment level.
-    -- instance: @[blueprint] conflicts with instance priority syntax
     -- other: notation, macro, and other non-standard declarations
-    if uncov.kind == "instance" || uncov.kind == "other" then continue
+    if uncov.kind == "other" then continue
     let name := uncov.name.toName
     if let some ins ← resolveInsertion env name uncov.kind uncov.moduleName then
       insertions := insertions.push ins

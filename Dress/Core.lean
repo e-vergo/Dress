@@ -72,7 +72,7 @@ def splitAtDefinitionAssign (hl : Highlighted) (splitAtAssign : Bool := true)
     | .tactics _ _ _ content :: rest => todo := content :: rest
     | node :: rest =>
       let isDefKw := match node with
-        | .token ⟨_, content⟩ => content ∈ ["def", "theorem", "lemma", "abbrev", "instance", "example", "structure", "class", "inductive", "axiom"]
+        | .token ⟨_, content⟩ => content ∈ ["def", "theorem", "lemma", "abbrev", "instance", "example", "structure", "class", "inductive", "axiom", "opaque"]
         | _ => false
       tokens := tokens.push (node, isDefKw)
       todo := rest
