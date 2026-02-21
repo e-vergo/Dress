@@ -71,7 +71,12 @@ def generateDeclarationTexFromNode (name : Name) (node : Architect.Node)
   let latexEnv := if node.statement.latexEnv.isEmpty then defaultEnv else node.statement.latexEnv
 
   -- Infer uses and leanok status from Architect
-  let (statementUses, proofUses) ← node.inferUses
+  -- Build eligible set and resolver from blueprintExt for per-declaration .tex generation
+  let env ← getEnv
+  let eligibleNames := Architect.blueprintExt.getEntries env |>.foldl (fun s (n, _) => s.insert n) ({} : Lean.NameSet)
+  let resolveLabel : Lean.Name → Option String := fun c =>
+    (Architect.blueprintExt.find? env c).map (·.latexLabel)
+  let (statementUses, proofUses) ← node.inferUses eligibleNames resolveLabel
 
   let mut out := ""
 

@@ -102,7 +102,12 @@ def _root_.Dress.NodeWithPos.toLatex (node : Dress.NodeWithPos) : m Latex := do
     let base64Below := Dress.stringToBase64 belowText
     addLatex := addLatex ++ "\\leanbelow{" ++ base64Below ++ "}\n"
 
-  let inferredUsess ← allNodes.mapM (·.inferUses)
+  -- Build eligible set and resolver from blueprintExt for the LaTeX output path.
+  -- This path only processes tagged nodes, so eligibleNames = all blueprint entries.
+  let eligibleNames := blueprintExt.getEntries env |>.foldl (fun s (n, _) => s.insert n) ({} : NameSet)
+  let resolveLabel : Name → Option String := fun c =>
+    (blueprintExt.find? env c).map (·.latexLabel)
+  let inferredUsess ← allNodes.mapM (·.inferUses eligibleNames resolveLabel)
   let statementUses := InferredUses.merge (inferredUsess.map (·.1))
   let proofUses := InferredUses.merge (inferredUsess.map (·.2))
 

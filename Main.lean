@@ -3,7 +3,6 @@ Copyright (c) 2025 Dress contributors. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 -/
 import Dress
-import Dress.AutoTag
 import Dress.Quickstart
 import Lean
 import Cli
@@ -169,8 +168,8 @@ def runGraphCmd (p : Parsed) : IO UInt32 := do
   runEnvOfImports modules {} do
     let t0 ← IO.monoNanosNow
 
-    -- Build graph from environment
-    let graph ← Graph.fromEnvironment (← getEnv)
+    -- Build graph from environment (includes all project-local declarations)
+    let graph ← Graph.fromEnvironment (← getEnv) modules
     let t1 ← IO.monoNanosNow
     IO.eprintln s!"  [timing] fromEnvironment: {(t1 - t0) / 1000000}ms ({graph.nodes.size} nodes)"
 
@@ -286,34 +285,6 @@ def graphCmd := `[Cli|
     ...modules : String; "The modules to include in the dependency graph."
 ]
 
-/-- Run the auto-tag command: discover uncovered declarations and add @[blueprint] attributes. -/
-def runAutoTagCmd (p : Parsed) : IO UInt32 := do
-  let modules := p.variableArgsAs! String |>.map (·.toName)
-  let dryRun := p.hasFlag "dry-run"
-  if modules.isEmpty then
-    IO.eprintln "Error: At least one module must be specified."
-    return 1
-  runEnvOfImports modules {} do
-    let insertions ← Dress.AutoTag.runAutoTag (← getEnv) modules dryRun
-    if dryRun then
-      IO.println s!"Would insert {insertions.size} @[blueprint] attributes:"
-      for ins in insertions do
-        IO.println s!"  {ins.filePath}:{ins.insertLine + 1} ({ins.kind}) {ins.declName}"
-    else
-      IO.println s!"Inserted {insertions.size} @[blueprint] attributes."
-  return 0
-
-def autoTagCmd := `[Cli|
-  "auto-tag" VIA runAutoTagCmd;
-  "Automatically add @[blueprint] attributes to uncovered declarations."
-
-  FLAGS:
-    n, "dry-run"; "Show what would be changed without modifying files."
-
-  ARGS:
-    ...modules : String; "The project modules to auto-tag (e.g. OSforGFF)."
-]
-
 def quickstartCmd := `[Cli|
   quickstart VIA runQuickstartCmd;
   "Set up an existing Lean project as an SBS blueprint project. Creates runway.json, CI workflow, LaTeX stub, and adds `import Dress` to source files."
@@ -334,7 +305,6 @@ def blueprintCmd : Cmd := `[Cli|
     singleCmd;
     indexCmd;
     graphCmd;
-    autoTagCmd;
     quickstartCmd
 ]
 

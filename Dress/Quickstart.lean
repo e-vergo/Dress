@@ -428,10 +428,9 @@ def runQuickstart (projectDir : System.FilePath) (githubUrl title baseUrl : Opti
 
   IO.println "Next steps:"
   IO.println "  1. lake build"
-  IO.println ("  2. lake exe extract_blueprint auto-tag " ++ libName)
-  IO.println "  3. Edit @[blueprint] annotations with statement/proof text"
-  IO.println ("  4. lake exe extract_blueprint graph " ++ libName)
-  IO.println "  5. git push (triggers CI to build and deploy site)"
+  IO.println "  2. Optionally annotate declarations with @[blueprint] for enriched metadata"
+  IO.println ("  3. lake exe extract_blueprint graph " ++ libName)
+  IO.println "  4. git push (triggers CI to build and deploy site)"
 
   return 0
 
