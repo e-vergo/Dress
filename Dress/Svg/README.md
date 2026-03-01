@@ -83,4 +83,4 @@ Key functions:
 
 ## Connection to Graph Rendering
 
-The `Graph/Svg.lean` module uses its own string-based SVG rendering (predating this composable API). The `Svg/` module provides a cleaner, reusable alternative for any SVG generation need beyond dependency graphs. The two modules share `escapeXml` functionality.
+`Graph/Svg.lean` is the production graph renderer. It uses direct string interpolation for performance and predates this composable API. The `Svg/` module provides a separate composable API for programmatic SVG construction. Both exist because the graph renderer was not migrated to the composable library after it was written -- the string-based approach is well-tested and performance-sensitive (~16 KB of rendering code), so migration was not justified. The two modules share `escapeXml` functionality.

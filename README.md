@@ -51,7 +51,7 @@ Dress is built into the [lean4-dress](https://github.com/e-vergo/lean4-dress) cu
 2. **Auto-import:** `processHeaderCore` in the toolchain injects `import Dress` into the import list when Dress oleans are findable, loading all environment extensions, parser categories, and elab_rules through the normal import system.
 3. **Safety guards:** Auto-import is skipped during Dress rebuilds (`mainModule.getRoot == \`Dress`) to avoid circular dependencies.
 
-[Mathlib.app](https://github.com/e-vergo/lean4-dress) ships the lean4-dress toolchain as a bundled macOS application where Dress is always active -- users write Lean, annotate with `@[blueprint]`, and everything works.
+[Mathlib.app](https://github.com/e-vergo/mathlib-app) ships the lean4-dress toolchain as a bundled macOS application where Dress is always active -- users write Lean, annotate with `@[blueprint]`, and everything works.
 
 For standalone use without the lean4-dress toolchain, Dress can be added as a Lake dependency (see Quick Start below).
 
@@ -132,8 +132,8 @@ See [CLI Reference > auto-tag](#auto-tag) for details.
 ### Build with Artifact Generation
 
 ```bash
-# Enable dress mode via environment variable
-BLUEPRINT_DRESS=1 lake build
+# Build with artifact generation (automatic when Dress is imported)
+lake build
 
 # Generate Lake facets
 lake build :blueprint
@@ -166,7 +166,7 @@ Dress operates in two distinct phases during the build process:
 
 ### Phase 1: Per-Declaration Capture (During Elaboration)
 
-When Lean compiles with `BLUEPRINT_DRESS=1`, the `elab_rules` in `Capture/ElabRules.lean` intercept each `@[blueprint]` declaration:
+When Dress is imported, the `elab_rules` in `Capture/ElabRules.lean` unconditionally intercept each `@[blueprint]` declaration:
 
 1. Standard elaboration runs first (the hook calls `elabCommandTopLevel`)
 2. SubVerso highlighting is captured via `highlightIncludingUnparsed`
@@ -200,7 +200,7 @@ The `graph` subcommand performs final processing:
    - Edge deduplication removes duplicate (from, to) pairs
 4. Validates the graph (connectivity, cycle detection)
 5. Computes status counts and upgrades nodes to `fullyProven`
-6. Applies transitive reduction (skipped for >100 nodes -- O(n^3) Floyd-Warshall)
+6. Applies transitive reduction (skipped for >500 nodes -- O(E*(V+E)) DFS-based)
 7. Runs Sugiyama layout for hierarchical visualization
 8. Writes `dep-graph.svg`, `dep-graph.json`, and `manifest.json`
 
@@ -394,14 +394,15 @@ This normalization is required for proper SVG centering because JavaScript's `ge
 | Crossing reduction (barycenter) | O(n^2) normal, O(n) with iteration limit | Reduced to 2 iterations for >100 nodes |
 | Transpose heuristic | O(L x N x swaps) | Skipped for >100 nodes |
 | Edge routing (visibility graph) | O(V^2) per edge | Skipped for >100 nodes |
-| Transitive reduction | O(n^3) Floyd-Warshall | Skipped for >100 nodes |
+| Transitive reduction | O(E*(V+E)) DFS-based | Skipped for >500 nodes |
 
 **>100 node optimizations** (automatic, triggered at `g.nodes.size > 100`):
 - Max 2 barycenter iterations (vs 4) - in `orderLayers`
 - Skip transpose heuristic - O(L x N x swaps) per call
 - Skip visibility graph routing - O(V^2) per edge
-- Skip transitive reduction - O(n^3) Floyd-Warshall
 - Use simplified direct Bezier curves instead
+
+**>500 node optimization**: transitive reduction (O(E*(V+E)) DFS-based) is skipped entirely.
 
 These thresholds allow PNT (591 nodes) to render in ~15 seconds while maintaining quality for smaller graphs like GCR (57 nodes) and SBS-Test (33 nodes).
 
@@ -644,7 +645,7 @@ Use `lake build :blueprint` instead.
 
 Dress artifacts are consumed by [Runway](https://github.com/e-vergo/Runway):
 
-1. Build project with Dress (`BLUEPRINT_DRESS=1 lake build`)
+1. Build project with Dress (`lake build`)
 2. Generate graph (`lake exe extract_blueprint graph ...`)
 3. Configure `runway.json` with paths to artifacts
 4. Generate site (`lake exe runway build runway.json`)
@@ -659,9 +660,9 @@ Runway loads:
 
 | Variable | Purpose |
 |----------|---------|
-| `BLUEPRINT_DRESS=1` | Enable artifact generation during `lake build` |
+| `BLUEPRINT_CAPTURE=false` | Disable artifact writing during `lake build` (opt-out) |
 
-When set, the `elab_rules` in `Capture/ElabRules.lean` intercept `@[blueprint]` declarations and write artifacts immediately after elaboration.
+Artifact generation is unconditional when Dress is imported -- the `elab_rules` in `Capture/ElabRules.lean` intercept `@[blueprint]` declarations and write artifacts immediately after elaboration. Set `BLUEPRINT_CAPTURE=false` to suppress artifact writing while keeping Dress loaded.
 
 ## Backwards Compatibility
 
