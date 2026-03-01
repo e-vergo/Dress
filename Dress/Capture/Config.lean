@@ -38,6 +38,29 @@ structure BlueprintConfig where
   trace : Bool := false
 deriving Repr, Inhabited
 
+/-- Check if declModifiers contains a @[noblueprint] attribute.
+    Since `noblueprint` is registered via `registerBuiltinAttribute` (not custom syntax),
+    it parses as `Lean.Parser.Attr.simple` with the name as an identifier child. -/
+def hasNoblueprintAttr (mods : Syntax) : Bool :=
+  let attrs? := mods[1]?
+  match attrs? with
+  | none => false
+  | some attrs =>
+    if attrs.isNone then false
+    else
+      let attrsNode := attrs[0]!
+      let attrInstances := attrsNode[1]!
+      attrInstances.getArgs.any fun attrInst =>
+        -- attrInst[1] is the attribute. For simple attributes it has kind
+        -- `Lean.Parser.Attr.simple` and attrInst[1][0].getId gives the name.
+        match attrInst[1]? with
+        | some attr =>
+          if attr.getKind == `Lean.Parser.Attr.simple then
+            attr[0]?.map (·.getId == `noblueprint) |>.getD false
+          else
+            false
+        | none => false
+
 /-- Check if declModifiers contains a @[blueprint] attribute. -/
 def hasBlueprintAttr (mods : Syntax) : Bool :=
   -- declModifiers[1] is the optional attributes

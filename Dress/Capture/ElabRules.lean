@@ -13,19 +13,30 @@ import Dress.Generate.Declaration
 import Architect.Basic
 
 /-!
-# Elaboration Rules for Blueprint Declarations
+# Elaboration Rules for All Declarations
 
-This module provides `elab_rules` that intercept declarations with `@[blueprint]`
-attributes and capture highlighting after elaboration while info trees are still available.
+This module provides `elab_rules` that intercept ALL declarations (theorem, def, lemma,
+structure, class, instance, axiom, inductive, abbrev) and capture SubVerso highlighting
+after elaboration while info trees are still available.
 
 ## Architecture
 
-We use `elab_rules` to intercept declarations that have `@[blueprint]`.
-After standard elaboration completes (but while info trees still exist), we capture
-the highlighting and store it in the environment extension.
+Every declaration is captured by default. The `@[blueprint]` attribute is now optional
+metadata for titles, statements, manual status, etc. Declarations can opt out via
+`@[noblueprint]`.
 
-The key insight is that `elab_rules` run before the standard elaborators, and we can
-call the standard elaborator explicitly, then capture highlighting afterward.
+The `BLUEPRINT_CAPTURE` environment variable provides a global kill switch: set it to
+`"false"` to disable all capture (for non-blueprint builds using the same toolchain).
+
+## Capture flow
+
+1. elab_rules intercept the declaration
+2. Standard elaboration runs (via `elabCommandTopLevel`)
+3. If the declaration has `@[blueprint]`, the Architect attribute handler already created
+   a Node in `blueprintExt` -- we use that.
+4. If the declaration has no `@[blueprint]`, we auto-create a minimal Node using the
+   fully qualified name as the label and register it in `blueprintExt`.
+5. SubVerso highlighting is captured and artifacts are written.
 -/
 
 open Lean Elab Command Term Meta
@@ -33,11 +44,16 @@ open SubVerso.Highlighting
 
 namespace Dress.Capture
 
--- Note: `register_option blueprint.dress`, the `#dress` command, and `isDressEnabled`
--- were removed as part of the always-active Dress integration (#247).
--- Artifact writing is now unconditional for @[blueprint] declarations.
--- The BLUEPRINT_DRESS env var, blueprint.dress option, and .dress marker file
--- are no longer checked.
+/-! ## Global Capture Control -/
+
+/-- Check if blueprint capture is globally enabled.
+    When `BLUEPRINT_CAPTURE` is set to `"false"` (case-insensitive), all capture is disabled.
+    This allows the same toolchain to be used for non-blueprint builds. -/
+def isCaptureEnabled : IO Bool := do
+  let val ← IO.getEnv "BLUEPRINT_CAPTURE"
+  match val with
+  | some v => return v.toLower != "false"
+  | none => return true
 
 /-! ## Declaration Interception Helpers -/
 
@@ -62,17 +78,52 @@ def withCaptureHookFlag (act : CommandElabM α) : CommandElabM α := do
   finally
     blueprintCaptureHookRef.set false
 
-/-- Elaborate a declaration command and capture highlighting for blueprint declarations.
+/-- Determine the LaTeX environment for a declaration based on its kind in the environment. -/
+private def inferLatexEnv (env : Environment) (name : Name) (hasProofPart : Bool) : String :=
+  if isClass env name then "class"
+  else if isStructure env name then "structure"
+  else if Meta.isInstanceCore env name then "instance"
+  else match env.find? name with
+    | some (.defnInfo dv) => if dv.hints.isAbbrev then "abbrev" else "definition"
+    | some (.inductInfo _) => "inductive"
+    | some (.axiomInfo _) => "axiom"
+    | _ => if hasProofPart then "theorem" else "definition"
+
+/-- Check whether a resolved declaration name corresponds to a theorem
+    (i.e., originally declared with `theorem` or `lemma`). -/
+private def isTheoremDecl (env : Environment) (name : Name) : Bool :=
+  match env.find? name with
+  | some (.thmInfo _) => true
+  | _ => false
+
+/-- Create a minimal Architect.Node for an auto-captured declaration (no `@[blueprint]` tag).
+    Uses the fully qualified name as the label. -/
+private def mkAutoNode (env : Environment) (name : Name) : Architect.Node :=
+  let hasProofPart := isTheoremDecl env name
+  let latexEnv := inferLatexEnv env name hasProofPart
+  let statement : Architect.NodePart := { text := "", latexEnv := latexEnv }
+  let proof : Option Architect.NodePart :=
+    if hasProofPart then some { text := "", latexEnv := "proof" } else none
+  { name := name
+    latexLabel := name.toString
+    statement := statement
+    proof := proof
+    status := .notReady
+    statusExplicit := false
+    discussion := none
+    title := none }
+
+/-- Elaborate a declaration command and capture highlighting.
     This helper is called by the elab_rules below.
 
-    Automatically captures SubVerso highlighting and writes dressed artifacts
-    (`.tex`, `.html`, `.json`) for every `@[blueprint]` declaration.
+    For `@[blueprint]`-tagged declarations, the Node was already created by the Architect
+    attribute handler. For untagged declarations, we auto-create a minimal Node and
+    register it in `blueprintExt`.
 
     @param stx The full declaration syntax
     @param declId The declaration identifier syntax
-    @param _mods The declModifiers syntax (optional, kept for backward compatibility but no longer used;
-                 we now read from LeanArchitect's blueprintExt instead of re-parsing) -/
-def elabDeclAndCaptureHighlighting (stx : Syntax) (declId : Syntax) (_mods : Option Syntax := none)
+    @param mods The declModifiers syntax (used to check for @[blueprint]/@[noblueprint]) -/
+def elabDeclAndCaptureHighlighting (stx : Syntax) (declId : Syntax) (mods : Option Syntax := none)
     : CommandElabM Unit := do
   -- Run standard command elaboration with the flag set to prevent recursion
   withCaptureHookFlag do
@@ -85,14 +136,24 @@ def elabDeclAndCaptureHighlighting (stx : Syntax) (declId : Syntax) (_mods : Opt
       let env ← getEnv
       let resolvedName := if env.contains fullName then fullName else name
       if env.contains resolvedName then
+        -- Determine if @[blueprint] was present (Node already in blueprintExt)
+        let hasBlueprint := mods.map hasBlueprintAttr |>.getD false
+
+        -- If no @[blueprint], auto-create a Node and register it
+        if !hasBlueprint then
+          let node := mkAutoNode env resolvedName
+          let env' := Architect.blueprintExt.addEntry env (resolvedName, node)
+          let env'' := Architect.addLeanNameOfLatexLabel env' node.latexLabel resolvedName
+          modifyEnv fun _ => env''
+          trace[blueprint] "Auto-captured {resolvedName} (label={node.latexLabel})"
+
         -- Time the captureHighlighting operation
         let captureStart ← IO.monoMsNow
         captureHighlighting resolvedName stx
         let captureEnd ← IO.monoMsNow
         let captureTime := captureEnd - captureStart
 
-        -- Write per-declaration artifacts for every @[blueprint] declaration.
-        -- (The dress-mode gate was removed in #247 -- artifact writing is now unconditional.)
+        -- Write per-declaration artifacts
         let env ← getEnv
         match Architect.blueprintExt.find? env resolvedName with
         | some node =>
@@ -128,16 +189,28 @@ def elabDeclAndCaptureHighlighting (stx : Syntax) (declId : Syntax) (_mods : Opt
         | none =>
           trace[blueprint] "blueprintExt not populated for {resolvedName}"
 
+/-- Common guard logic for all elab_rules.
+    Returns `true` if capture should proceed, `false` if we should skip (throwUnsupportedSyntax). -/
+private def shouldCapture (mods : Syntax) : CommandElabM Bool := do
+  -- Check recursion guard
+  if (← inCaptureHookM) then return false
+  -- Check global capture enable
+  unless (← isCaptureEnabled) do return false
+  -- Check @[noblueprint] opt-out
+  if hasNoblueprintAttr mods then return false
+  return true
+
 /-! ## Elaboration Rules
 
-We use `elab_rules` to intercept declarations with @[blueprint] attribute.
-These intercept declarations and capture highlighting after elaboration.
+We intercept ALL declarations to capture highlighting and generate artifacts.
+`@[blueprint]` is no longer required -- it provides optional metadata.
+`@[noblueprint]` opts a declaration out of capture.
+`BLUEPRINT_CAPTURE=false` disables all capture globally.
 
-We use scoped rules so they only apply when Dress is imported.
-The rules check the `inCaptureHook` flag to prevent infinite recursion.
+We use the `inCaptureHook` flag to prevent infinite recursion.
 -/
 
--- Theorem declarations with @[blueprint]
+-- Theorem/lemma and axiom declarations
 -- Use high priority to run before built-in elaborators
 @[command_elab Lean.Parser.Command.declaration]
 def elabBlueprintDeclaration : CommandElab := fun stx => do
@@ -150,72 +223,46 @@ def elabBlueprintDeclaration : CommandElab := fun stx => do
   unless declKind == ``Lean.Parser.Command.theorem ||
          declKind == ``Lean.Parser.Command.axiom do
     throwUnsupportedSyntax
-  if (← inCaptureHookM) then
-    throwUnsupportedSyntax
   let mods := stx[0]
-  let hasBlueprint := hasBlueprintAttr mods
-  trace[blueprint.debug] "elabBlueprintDeclaration: hasBlueprint={hasBlueprint}"
-  if hasBlueprint then
-    let declId := decl[1]
-    elabDeclAndCaptureHighlighting stx declId (some mods)
-  else
-    throwUnsupportedSyntax
+  unless (← shouldCapture mods) do throwUnsupportedSyntax
+  let declId := decl[1]
+  elabDeclAndCaptureHighlighting stx declId (some mods)
 
--- Definition declarations with @[blueprint]
+-- Definition declarations
 elab_rules : command
   | `($mods:declModifiers def $declId:declId $_sig:optDeclSig $_val:declVal) => do
-    if (← inCaptureHookM) then throwUnsupportedSyntax
-    let hasBlueprint := hasBlueprintAttr mods
-    trace[blueprint.debug] "elab_rules def: hasBlueprint={hasBlueprint}"
-    if hasBlueprint then
-      elabDeclAndCaptureHighlighting (← getRef) declId (some mods)
-    else
-      throwUnsupportedSyntax
+    unless (← shouldCapture mods) do throwUnsupportedSyntax
+    elabDeclAndCaptureHighlighting (← getRef) declId (some mods)
 
--- Abbreviation declarations with @[blueprint]
+-- Abbreviation declarations
 elab_rules : command
   | `($mods:declModifiers abbrev $declId:declId $_sig:optDeclSig $_val:declVal) => do
-    if (← inCaptureHookM) then throwUnsupportedSyntax
-    if hasBlueprintAttr mods then
-      elabDeclAndCaptureHighlighting (← getRef) declId (some mods)
-    else
-      throwUnsupportedSyntax
+    unless (← shouldCapture mods) do throwUnsupportedSyntax
+    elabDeclAndCaptureHighlighting (← getRef) declId (some mods)
 
--- Structure declarations with @[blueprint]
+-- Structure declarations
 elab_rules : command
   | `($mods:declModifiers structure $declId:declId $_*) => do
-    if (← inCaptureHookM) then throwUnsupportedSyntax
-    if hasBlueprintAttr mods then
-      elabDeclAndCaptureHighlighting (← getRef) declId (some mods)
-    else
-      throwUnsupportedSyntax
+    unless (← shouldCapture mods) do throwUnsupportedSyntax
+    elabDeclAndCaptureHighlighting (← getRef) declId (some mods)
 
--- Class declarations with @[blueprint]
+-- Class declarations
 elab_rules : command
   | `($mods:declModifiers class $declId:declId $_*) => do
-    if (← inCaptureHookM) then throwUnsupportedSyntax
-    if hasBlueprintAttr mods then
-      elabDeclAndCaptureHighlighting (← getRef) declId (some mods)
-    else
-      throwUnsupportedSyntax
+    unless (← shouldCapture mods) do throwUnsupportedSyntax
+    elabDeclAndCaptureHighlighting (← getRef) declId (some mods)
 
--- Inductive declarations with @[blueprint]
+-- Inductive declarations
 elab_rules : command
   | `($mods:declModifiers inductive $declId:declId $_*) => do
-    if (← inCaptureHookM) then throwUnsupportedSyntax
-    if hasBlueprintAttr mods then
-      elabDeclAndCaptureHighlighting (← getRef) declId (some mods)
-    else
-      throwUnsupportedSyntax
+    unless (← shouldCapture mods) do throwUnsupportedSyntax
+    elabDeclAndCaptureHighlighting (← getRef) declId (some mods)
 
--- Instance declarations with @[blueprint]
+-- Instance declarations
 elab_rules : command
   | `($mods:declModifiers instance $[$_prio:namedPrio]? $declId:declId $_sig:declSig $_val:declVal) => do
-    if (← inCaptureHookM) then throwUnsupportedSyntax
-    if hasBlueprintAttr mods then
-      elabDeclAndCaptureHighlighting (← getRef) declId (some mods)
-    else
-      throwUnsupportedSyntax
+    unless (← shouldCapture mods) do throwUnsupportedSyntax
+    elabDeclAndCaptureHighlighting (← getRef) declId (some mods)
 
 /-! ## Retroactive Annotation Support
 
@@ -269,5 +316,6 @@ abbrev inCaptureHook := Capture.inCaptureHookM
 def withCaptureHookFlag (act : CommandElabM α) : CommandElabM α :=
   Capture.withCaptureHookFlag act
 abbrev elabDeclAndCaptureHighlighting := Capture.elabDeclAndCaptureHighlighting
+abbrev isCaptureEnabled := Capture.isCaptureEnabled
 
 end Dress

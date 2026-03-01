@@ -1,15 +1,14 @@
 # Dress
 
-![Lean](https://img.shields.io/badge/Lean-v4.27.0-blue)
+![Lean](https://img.shields.io/badge/Lean-v4.28.0-blue)
 ![License](https://img.shields.io/badge/License-Apache%202.0-green)
 
-> **Prototype Status**: Alpha software with known bugs and incomplete features. Not yet production-ready.
-
-Artifact generation for Lean 4 mathematical blueprints. Transforms `@[blueprint]`-decorated declarations into syntax-highlighted HTML and LaTeX with interactive hovers, and builds dependency graphs with hierarchical layout.
+Artifact generation for Lean 4 formalization documentation. Transforms `@[blueprint]`-decorated declarations into syntax-highlighted HTML with interactive hovers, and builds dependency graphs with hierarchical layout.
 
 ## Table of Contents
 
 - [Overview](#overview)
+- [lean4-dress Toolchain](#lean4-dress-toolchain)
 - [Quick Start](#quick-start)
 - [Dependency Chain](#dependency-chain)
 - [Two-Phase Build Architecture](#two-phase-build-architecture)
@@ -28,25 +27,49 @@ Artifact generation for Lean 4 mathematical blueprints. Transforms `@[blueprint]
 
 Dress is the artifact generation layer of the Side-by-Side Blueprint formalization documentation toolchain. It operates as the build-time phase, producing artifacts that Runway consumes for site generation.
 
-**Part of the [Side-by-Side Blueprint](https://github.com/e-vergo/SLS-Strange-Loop-Station) monorepo.** When used independently, Dress is available at [github.com/e-vergo/Dress](https://github.com/e-vergo/Dress).
+**Part of the [Side-by-Side Blueprint](https://github.com/e-vergo/Side-By-Side-Blueprint) toolchain.** When used independently, Dress is available at [github.com/e-vergo/Dress](https://github.com/e-vergo/Dress).
 
 **Core responsibilities:**
 
 1. Intercept `@[blueprint]` declarations during Lean elaboration
 2. Capture syntax highlighting via [SubVerso](https://github.com/e-vergo/subverso) while info trees are available (93-99% of build time)
 3. Render HTML with rainbow bracket matching via [Verso](https://github.com/e-vergo/verso)
-4. Generate LaTeX with embedded hover data
+4. Generate declaration artifacts with embedded hover data
 5. Build dependency graphs with Sugiyama hierarchical layout
 6. Validate graph structure (connectivity, cycles)
 7. Compute status counts and auto-upgrade nodes to `fullyProven`
 
-**Why validation matters:** The Tao incident (January 2026) demonstrated that a proof can typecheck while proving something entirely different from what was intended. When Terence Tao reviewed the PNT+ blueprint graph, he noticed disconnected final theorems - AI-provided proofs had satisfied trivial versions of statements. Dress's connectivity validation catches this class of errors automatically.
+**Why validation matters:** The Tao incident (January 2026) demonstrated that a proof can typecheck while proving something entirely different from what was intended. When Terence Tao reviewed the PNT+ blueprint graph, he noticed disconnected final theorems -- AI-provided proofs had satisfied trivial versions of statements. Dress's connectivity validation catches this class of errors automatically.
 
 Dress re-exports [LeanArchitect](https://github.com/e-vergo/LeanArchitect), so importing Dress provides the `@[blueprint]` attribute.
 
+## lean4-dress Toolchain
+
+Dress is built into the [lean4-dress](https://github.com/e-vergo/lean4-dress) custom Lean 4.28 toolchain as a dynlib. When using the lean4-dress toolchain (the standard way to use Side-by-Side Blueprint), **Dress is auto-imported -- no explicit `import Dress` is needed.** The toolchain handles:
+
+1. **Dynlib pre-loading:** Eight dylibs (including Dress and its dependencies) are loaded at startup via `loadDressDynlibsOnce`, making native symbols available before module import.
+2. **Auto-import:** `processHeaderCore` in the toolchain injects `import Dress` into the import list when Dress oleans are findable, loading all environment extensions, parser categories, and elab_rules through the normal import system.
+3. **Safety guards:** Auto-import is skipped during Dress rebuilds (`mainModule.getRoot == \`Dress`) to avoid circular dependencies.
+
+[Mathlib.app](https://github.com/e-vergo/lean4-dress) ships the lean4-dress toolchain as a bundled macOS application where Dress is always active -- users write Lean, annotate with `@[blueprint]`, and everything works.
+
+For standalone use without the lean4-dress toolchain, Dress can be added as a Lake dependency (see Quick Start below).
+
 ## Quick Start
 
-### 1. Add Dependency
+### Using lean4-dress Toolchain (Recommended)
+
+With the lean4-dress toolchain, Dress is auto-imported. Just annotate declarations:
+
+```lean
+@[blueprint "thm:main"]
+theorem mainTheorem : 2 + 2 = 4 := rfl
+
+@[blueprint "thm:key" (keyDeclaration := true, message := "Central result")]
+theorem keyTheorem : P := by sorry
+```
+
+### Standalone Lake Dependency
 
 In your `lakefile.toml`:
 
@@ -65,23 +88,28 @@ name = "Dress"
 path = "../Dress"
 ```
 
-### 2. Scaffold the Project (Recommended)
+Then import explicitly:
 
-Use the `quickstart` subcommand to generate configuration, LaTeX structure, and CI workflow automatically:
+```lean
+import Dress  -- Re-exports @[blueprint] from LeanArchitect
+
+@[blueprint "thm:main"]
+theorem mainTheorem : 2 + 2 = 4 := rfl
+```
+
+### Scaffold the Project
+
+Use the `quickstart` subcommand to generate configuration and CI workflow automatically:
 
 ```bash
 lake exe extract_blueprint quickstart
 ```
 
-This creates `runway.json`, `blueprint.tex` (with chapters mirroring your directory structure), a GitHub Actions workflow, and injects `import Dress` into your `.lean` files. See [CLI Reference > quickstart](#quickstart) for flags and details.
+This creates `runway.json`, a GitHub Actions workflow, and injects `import Dress` into your `.lean` files. See [CLI Reference > quickstart](#quickstart) for flags and details.
 
-Alternatively, set up these files manually as described below.
-
-### 3. Mark Declarations
+### Mark Declarations
 
 ```lean
-import Dress  -- Re-exports @[blueprint] from LeanArchitect
-
 @[blueprint "thm:main"]
 theorem mainTheorem : 2 + 2 = 4 := rfl
 
@@ -101,7 +129,7 @@ lake exe extract_blueprint auto-tag MyLib
 
 See [CLI Reference > auto-tag](#auto-tag) for details.
 
-### 4. Build with Artifact Generation
+### Build with Artifact Generation
 
 ```bash
 # Enable dress mode via environment variable
@@ -129,7 +157,7 @@ SubVerso -> LeanArchitect -> Dress -> Runway
 | [SubVerso](../../forks/subverso/) | `forks/subverso/` | Extracts syntax highlighting with O(1) indexed lookups via InfoTable |
 | [LeanArchitect](../../forks/LeanArchitect/) | `forks/LeanArchitect/` | Defines `@[blueprint]` attribute with 8 metadata and 2 manual status options |
 | **Dress** | `toolchain/Dress/` | Generates artifacts, computes statistics, validates graphs, performs Sugiyama layout |
-| [Runway](../Runway/) | `toolchain/Runway/` | Consumes Dress output to produce the final website, dashboard, and paper/PDF |
+| [Runway](../Runway/) | `toolchain/Runway/` | Consumes Dress output to produce the final website and dashboard |
 | [Verso](../../forks/verso/) | `forks/verso/` | Document framework with SBSBlueprint and VersoPaper genres |
 
 ## Two-Phase Build Architecture
@@ -149,7 +177,7 @@ When Lean compiles with `BLUEPRINT_DRESS=1`, the `elab_rules` in `Capture/ElabRu
 
 **Timing breakdown** (typical per-declaration):
 - SubVerso highlighting: 800-6500ms (93-99%)
-- TeX/HTML generation: <30ms (<1%)
+- HTML generation: <30ms (<1%)
 
 ### Phase 2: Lake Facet Aggregation
 
@@ -158,8 +186,6 @@ After compilation, Lake facets aggregate per-declaration artifacts:
 | Facet | Level | Output |
 |-------|-------|--------|
 | `dressed` | Module | `module.json` aggregating all declarations |
-| `blueprint` | Module | `module.tex` with `\input{}` directives |
-| `blueprint` | Library | `library/{LibName}.tex` index with `\inputleanmodule` macro |
 | `depGraph` | Library | `dep-graph.svg` and `dep-graph.json` |
 
 ### Phase 3: Manifest Generation (CLI)
@@ -174,7 +200,7 @@ The `graph` subcommand performs final processing:
    - Edge deduplication removes duplicate (from, to) pairs
 4. Validates the graph (connectivity, cycle detection)
 5. Computes status counts and upgrades nodes to `fullyProven`
-6. Applies transitive reduction (skipped for >100 nodes - O(n^3) Floyd-Warshall)
+6. Applies transitive reduction (skipped for >100 nodes -- O(n^3) Floyd-Warshall)
 7. Runs Sugiyama layout for hierarchical visualization
 8. Writes `dep-graph.svg`, `dep-graph.json`, and `manifest.json`
 
@@ -186,11 +212,13 @@ Written to `.lake/build/dressed/{Module/Path}/{sanitized-label}/`:
 
 | File | Description |
 |------|-------------|
-| `decl.tex` | LaTeX source for the declaration |
+| `decl.tex` | Structured declaration data with base64-encoded HTML, hover data, and metadata |
 | `decl.html` | Pre-rendered HTML with hover spans and rainbow brackets via `toHtmlRainbow` |
 | `decl.json` | Metadata: `{"name": "...", "label": "...", "highlighting": {...}}` |
 | `decl.hovers.json` | Hover tooltip content for interactive display (JSON mapping IDs to content) |
 | `manifest.entry` | Label-to-path mapping: `{"label": "...", "path": "..."}` |
+
+The `decl.tex` file uses a structured format with commands like `\leansignaturesourcehtml{base64}`, `\leanproofsourcehtml{base64}`, and `\leanhoverdata{base64}` to embed syntax-highlighted HTML and hover data. Runway parses this format to extract content for side-by-side display.
 
 Timing data is available via `trace[blueprint.timing]` for performance analysis.
 
@@ -199,16 +227,15 @@ Timing data is available via `trace[blueprint.timing]` for performance analysis.
 | File | Location | Description |
 |------|----------|-------------|
 | `module.json` | `.lake/build/dressed/{Module/Path}/` | Aggregated declaration data |
-| `module.tex` | `.lake/build/dressed/{Module/Path}/` | `\input{}` directives for each declaration |
 
 ### Library-Level Artifacts
 
 | File | Location | Description |
 |------|----------|-------------|
-| `{LibName}.tex` | `.lake/build/dressed/library/` | Library index with `\inputleanmodule` macro |
 | `dep-graph.svg` | `.lake/build/dressed/` | Dependency graph SVG visualization |
 | `dep-graph.json` | `.lake/build/dressed/` | Layout data for interactive rendering |
 | `manifest.json` | `.lake/build/dressed/` | Stats, validation, metadata for Runway |
+| `subgraphs/metadata.json` | `.lake/build/dressed/subgraphs/` | Per-node depth metadata for client-side subgraph rendering |
 
 ## Manifest Schema
 
@@ -436,7 +463,7 @@ A node is upgraded to `fullyProven` if:
 1. Its status is `proven` (has Lean code without sorryAx)
 2. All its ancestors are `proven` or `fullyProven`
 
-This provides stronger verification guarantees than `proven` alone - it means the entire proof tree from axioms to this node is complete.
+This provides stronger verification guarantees than `proven` alone -- it means the entire proof tree from axioms to this node is complete.
 
 ## Rainbow Bracket Highlighting
 
@@ -493,15 +520,16 @@ Dress/
 
   Generate/
     Declaration.lean   # Per-declaration artifact writer
-    Latex.lean         # LaTeX generation for declarations
+    Latex.lean         # Structured declaration format generation (decl.tex)
     Module.lean        # Module-level utilities
 
   Graph/
     Types.lean         # Node, Edge, Graph, StatusCounts, CheckResults
     Build.lean         # Graph construction, validation, computeFullyProven
     Layout.lean        # Sugiyama algorithm, edge routing (~1500 lines)
-    Json.lean          # JSON serialization for D3.js
+    Json.lean          # JSON serialization
     Svg.lean           # SVG generation (canonical status colors)
+    Subgraph.lean      # Per-node subgraph extraction and depth computation
 
   Render/
     SideBySide.lean    # Side-by-side display rendering
@@ -511,17 +539,28 @@ Dress/
     Html.lean          # HTML serialization
     Artifacts.lean     # Dressed artifact format
 
+  Svg/
+    Core.lean          # SVG element primitives
+    Shapes.lean        # Rectangle, ellipse, path shapes
+    Style.lean         # SVG styling utilities
+    Text.lean          # SVG text rendering
+    Transform.lean     # SVG coordinate transforms
+    Coordinate.lean    # Coordinate system utilities
+
   Base64.lean          # RFC 4648 Base64 encoding
+  Cache.lean           # Build cache for incremental compilation
   Content.lean         # BlueprintContent type for module contents
   Core.lean            # Core types, splitAtDefinitionAssign
   Highlighting.lean    # SubVerso highlighting integration
   HtmlRender.lean      # Verso HTML rendering wrapper
   Hook.lean            # Main entry point, re-exports
   Load.lean            # Loading nodes from environment
-  Output.lean          # LaTeX and JSON output functions
+  Output.lean          # Output functions for declaration artifacts
   Paths.lean           # Path utilities for artifact locations
+  Quickstart.lean      # Project scaffolding (quickstart command)
   Render.lean          # Rendering utilities
   SubVersoExtract.lean # SubVerso extraction utilities
+  Svg.lean             # SVG barrel file
 
 Main.lean              # CLI executable (extract_blueprint: graph, quickstart, auto-tag, single, index)
 lakefile.lean          # Package definition with Lake facets
@@ -529,7 +568,7 @@ lakefile.lean          # Package definition with Lake facets
 
 ## CLI Reference
 
-The `extract_blueprint` executable provides five subcommands:
+The `extract_blueprint` executable provides four subcommands:
 
 ### graph (Primary)
 
@@ -539,11 +578,11 @@ Generate dependency graph and manifest:
 lake exe extract_blueprint graph --build .lake/build Module1 Module2
 ```
 
-Outputs `dep-graph.svg`, `dep-graph.json`, and `manifest.json` to `.lake/build/dressed/`.
+Outputs `dep-graph.svg`, `dep-graph.json`, `manifest.json`, and `subgraphs/metadata.json` to `.lake/build/dressed/`.
 
 ### quickstart
 
-Scaffold an existing Lean project into an SBS blueprint project. Creates `runway.json`, `.github/workflows/blueprint.yml`, and `runway/src/blueprint.tex` with auto-generated chapters mirroring the repository directory structure (subdirectories become chapters, top-level files become a "Main Results" chapter). Each chapter includes `\inputleanmodule{...}` directives for its modules. Also injects `import Dress` into all `.lean` files containing declarations.
+Scaffold an existing Lean project into an SBS blueprint project. Creates `runway.json`, `.github/workflows/blueprint.yml`, and injects `import Dress` into `.lean` files containing declarations.
 
 ```bash
 # Basic usage (auto-detects GitHub URL and assets path)
@@ -579,7 +618,7 @@ Insert `@[blueprint]` attributes on declarations not yet annotated. Requires a c
 lake exe extract_blueprint auto-tag MyLib
 ```
 
-Scans all declarations in the given library and inserts `@[blueprint (statement := /-- -/) (proof := /-- -/)]` above each uncovered declaration. When a declaration already has an attribute block (e.g., `@[simp]`), injects `blueprint` into the existing block (`@[blueprint, simp]`) to avoid parser conflicts. Skips `instance` declarations (not valid blueprint targets).
+Scans all declarations in the given library and inserts `@[blueprint]` above each uncovered declaration. When a declaration already has an attribute block (e.g., `@[simp]`), injects `blueprint` into the existing block (`@[blueprint, simp]`) to avoid parser conflicts. Skips `instance` declarations (not valid blueprint targets).
 
 ### single (Deprecated)
 
@@ -606,15 +645,15 @@ Use `lake build :blueprint` instead.
 Dress artifacts are consumed by [Runway](https://github.com/e-vergo/Runway):
 
 1. Build project with Dress (`BLUEPRINT_DRESS=1 lake build`)
-2. Generate facets (`lake build :blueprint`)
-3. Generate graph (`lake exe extract_blueprint graph ...`)
-4. Configure `runway.json` with paths to artifacts
-5. Generate site (`lake exe runway build runway.json`)
+2. Generate graph (`lake exe extract_blueprint graph ...`)
+3. Configure `runway.json` with paths to artifacts
+4. Generate site (`lake exe runway build runway.json`)
 
 Runway loads:
 - Per-declaration artifacts from `.lake/build/dressed/{Module/Path}/`
 - `manifest.json` for dashboard data (precomputed, no recomputation)
 - `dep-graph.json` and `dep-graph.svg` for visualization
+- `subgraphs/metadata.json` for client-side subgraph rendering
 
 ## Environment Variable
 
@@ -637,41 +676,7 @@ JSON parsing handles legacy status values for compatibility with older manifests
 | [LeanArchitect](../../forks/LeanArchitect/) | `forks/LeanArchitect/` | `@[blueprint]` attribute definition |
 | [SubVerso](../../forks/subverso/) | `forks/subverso/` | Syntax highlighting extraction with O(1) indexed lookups |
 | [Verso](../../forks/verso/) | `forks/verso/` | HTML rendering with rainbow bracket matching |
-| Cli | External | Command-line interface (mhuisi/lean4-cli)
-
-## Local Development
-
-When developing within the monorepo, use the shared build script:
-
-```bash
-# From a consumer project (e.g., SBS-Test)
-cd /Users/eric/GitHub/Side-By-Side-Blueprint/toolchain/SBS-Test
-python ../../dev/scripts/build.py
-
-# Or using the shell wrapper
-./scripts/build_blueprint.sh
-```
-
-The build script automatically:
-1. Commits and pushes changes to all repos (no skip option by design)
-2. Updates lake manifests
-3. Builds toolchain in dependency order (SubVerso -> LeanArchitect -> Dress -> Runway)
-4. Fetches mathlib cache
-5. Builds the project with `BLUEPRINT_DRESS=1`
-6. Generates dependency graph and manifest
-7. Generates site
-8. Starts a local server on port 8000
-
-See the [Archive & Tooling Hub](../../dev/storage/README.md) for additional CLI commands.
-
-## Related Documentation
-
-| Document | Purpose |
-|----------|---------|
-| [Side-by-Side Blueprint README](../../dev/markdowns/README.md) | Project overview |
-| [ARCHITECTURE.md](../../dev/markdowns/ARCHITECTURE.md) | System architecture |
-| [GOALS.md](../../dev/markdowns/GOALS.md) | Project vision |
-| [Detailed Architecture Reference](../../dev/.refs/ARCHITECTURE.md) | In-depth technical reference |
+| Cli | External | Command-line interface (mhuisi/lean4-cli) |
 
 ## Related Repositories (Monorepo)
 
@@ -681,9 +686,9 @@ See the [Archive & Tooling Hub](../../dev/storage/README.md) for additional CLI 
 | **LeanArchitect** | `forks/LeanArchitect/` | Blueprint attribute (upstream) |
 | **SubVerso** | `forks/subverso/` | Syntax highlighting (upstream) |
 | **Verso** | `forks/verso/` | Document framework (upstream) |
-| **SBS-Test** | `toolchain/SBS-Test/` | Minimal test project (49 nodes, all 7 statuses) |
+| **SBS-Test** | `toolchain/SBS-Test/` | Minimal test project (33 nodes, all 7 statuses) |
 | **dress-blueprint-action** | `toolchain/dress-blueprint-action/` | GitHub Actions CI solution + CSS/JS assets |
-| **GCR** | `showcase/General_Crystallographic_Restriction/` | Production example with paper (57 nodes) |
+| **GCR** | `showcase/General_Crystallographic_Restriction/` | Production example (57 nodes) |
 | **PNT** | `showcase/PrimeNumberTheoremAnd/` | Large-scale integration (591 nodes) |
 
 ## License
