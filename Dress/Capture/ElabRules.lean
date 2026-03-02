@@ -286,7 +286,13 @@ elab "#dressNodes" : command => do
   let env ← getEnv
   let entries := Architect.blueprintExt.getEntries env
   let buildDir : System.FilePath := ".lake" / "build"
-  let moduleName := env.header.mainModule
+  let rawModule := env.header.mainModule
+  -- For standalone files, derive module name from filename (same logic as Declaration.lean)
+  let moduleName ←
+    if rawModule == `_stdin then do
+      let fp : System.FilePath := (← read).fileName
+      pure (Name.mkSimple (fp.fileStem.getD "standalone"))
+    else pure rawModule
   let mut count : Nat := 0
   for (name, node) in entries do
     -- Skip imported declarations (only process nodes from the current module's env)

@@ -105,7 +105,7 @@ Use the `quickstart` subcommand to generate configuration and CI workflow automa
 lake exe extract_blueprint quickstart
 ```
 
-This creates `runway.json`, a GitHub Actions workflow, and injects `import Dress` into your `.lean` files. See [CLI Reference > quickstart](#quickstart) for flags and details.
+This creates an optional `runway.json` for CI/CD customization, a GitHub Actions workflow, and injects `import Dress` into your `.lean` files. Runway auto-derives config from the lakefile/directory, so the `runway.json` is not required for local builds. See [CLI Reference > quickstart](#quickstart) for flags and details.
 
 ### Mark Declarations
 
@@ -583,7 +583,7 @@ Outputs `dep-graph.svg`, `dep-graph.json`, `manifest.json`, and `subgraphs/metad
 
 ### quickstart
 
-Scaffold an existing Lean project into an SBS blueprint project. Creates `runway.json`, `.github/workflows/blueprint.yml`, and injects `import Dress` into `.lean` files containing declarations.
+Scaffold an existing Lean project into an SBS blueprint project. Creates an optional `runway.json` for CI/CD, `.github/workflows/blueprint.yml`, and injects `import Dress` into `.lean` files containing declarations. Runway auto-derives config from lakefile/directory, so the `runway.json` is not required for local use.
 
 ```bash
 # Basic usage (auto-detects GitHub URL and assets path)
@@ -603,13 +603,13 @@ lake exe extract_blueprint quickstart --force
 
 | Flag | Purpose |
 |------|---------|
-| `--title` | Project title for `runway.json` (default: project directory name) |
+| `--title` | Project title for optional `runway.json` (default: project directory name) |
 | `--github-url` | GitHub URL (default: auto-detected from `git remote get-url origin`, SSH normalized to HTTPS) |
 | `--base-url` | Base URL for site (default: `/`) |
 | `--dry-run` | Print what would be created without writing files |
 | `--force` | Overwrite existing files (default: skip existing) |
 
-Safe to re-run: existing files are skipped unless `--force` is passed. The `assetsDir` field in `runway.json` is auto-discovered by walking up from the project directory looking for `dress-blueprint-action/assets`.
+Safe to re-run: existing files are skipped unless `--force` is passed. The `assetsDir` field in the generated `runway.json` is auto-discovered by walking up from the project directory looking for `dress-blueprint-action/assets`. Runway also auto-discovers assets at runtime without needing this field.
 
 ### auto-tag
 
@@ -647,8 +647,7 @@ Dress artifacts are consumed by [Runway](https://github.com/e-vergo/Runway):
 
 1. Build project with Dress (`lake build`)
 2. Generate graph (`lake exe extract_blueprint graph ...`)
-3. Configure `runway.json` with paths to artifacts
-4. Generate site (`lake exe runway build runway.json`)
+3. Generate site (`lake exe runway build`) -- Runway auto-derives config from lakefile/directory
 
 Runway loads:
 - Per-declaration artifacts from `.lake/build/dressed/{Module/Path}/`

@@ -160,7 +160,19 @@ def writeDeclarationArtifactsFromNode (name : Name) (node : Architect.Node)
   -- Get build directory and module name
   let buildDir : System.FilePath := ".lake" / "build"
   let env ← getEnv
-  let moduleName := env.header.mainModule
+  let rawModule := env.header.mainModule
+  -- For standalone files (not part of a Lake project), mainModule is `_stdin`.
+  -- Derive a clean module name from the actual filename to avoid all standalone
+  -- files colliding in `.lake/build/dressed/_stdin/`.
+  let moduleName : Name :=
+    if rawModule == `_stdin then
+      match file with
+      | some fp =>
+        -- Extract stem: "/tmp/math/test.lean" -> "test"
+        let stem := fp.fileStem.getD "standalone"
+        .mkSimple stem
+      | none => rawModule
+    else rawModule
 
   -- Use the LaTeX label from the node
   let label := node.latexLabel
